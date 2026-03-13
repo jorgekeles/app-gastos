@@ -1,16 +1,41 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { BrandLogo } from "@/components/brand/brand-logo";
+import { ProtectedShell } from "@/components/app/protected-shell";
 import { SummaryCard } from "@/components/dashboard/summary-card";
-import { formatMoney, formatShortDate, getDashboardData } from "@/lib/app-db";
+import {
+  formatLongDate,
+  formatMoney,
+  formatShortDate,
+  getDashboardData,
+} from "@/lib/app-db";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-const defaultIncomeDate = new Date().toISOString().slice(0, 10);
+function buildDonutBackground(expenses: number, savings: number, available: number) {
+  const total = expenses + savings + available;
 
-type DashboardPageProps = {
-  searchParams?: Promise<Record<string, string | string[] | undefined>>;
-};
+  if (total <= 0) {
+    return "conic-gradient(var(--border) 0 100%)";
+  }
 
-export default async function DashboardPage({ searchParams }: DashboardPageProps) {
+  const expensesEnd = (expenses / total) * 100;
+  const savingsEnd = expensesEnd + (savings / total) * 100;
+
+  return `conic-gradient(
+    var(--warning) 0 ${expensesEnd}%,
+    var(--accent) ${expensesEnd}% ${savingsEnd}%,
+    var(--primary) ${savingsEnd}% 100%
+  )`;
+}
+
+function percentLabel(value: number, total: number) {
+  if (total <= 0) {
+    return "0%";
+  }
+
+  return `${((value / total) * 100).toFixed(1)}%`;
+}
+
+export default async function DashboardPage() {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
@@ -21,187 +46,244 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   }
 
   const dashboardData = await getDashboardData(user);
-  const params = (await searchParams) ?? {};
-  const incomeCreated = params["incomeCreated"] === "1";
-  const incomeError =
-    typeof params["incomeError"] === "string" ? params["incomeError"] : null;
-  const monthIncomeTotalLabel = formatMoney(
-    dashboardData.monthIncomeTotal,
-    dashboardData.family.baseCurrency,
+  const monthSavingsSlice = Math.max(dashboardData.monthSavingsNet, 0);
+  const monthAvailableSlice = Math.max(
+    dashboardData.monthIncomeTotal -
+      dashboardData.monthExpenseTotal -
+      monthSavingsSlice,
+    0,
   );
-  const donutBackground =
-    dashboardData.monthIncomeTotal > 0
-      ? "conic-gradient(var(--primary) 0 100%)"
-      : "conic-gradient(var(--border) 0 100%)";
+  const donutTotal =
+    dashboardData.monthExpenseTotal + monthSavingsSlice + monthAvailableSlice;
+  const donutBackground = buildDonutBackground(
+    dashboardData.monthExpenseTotal,
+    monthSavingsSlice,
+    monthAvailableSlice,
+  );
 
   return (
-    <main className="app-shell dashboard-layout">
-      <header className="site-header">
-        <BrandLogo caption="Tu espacio financiero familiar ya puede cargar ingresos." href="/" />
-
-        <form action="/auth/signout" className="signout-form" method="post">
-          <button className="ghost-button" type="submit">
-            Cerrar sesion
-          </button>
-        </form>
-      </header>
-
-      <section className="dashboard-head">
-        <div>
-          <div className="eyebrow">Resumen financiero familiar</div>
-          <h1>Hola, {dashboardData.fullName}.</h1>
-          <p>
-            Ya dejamos operativo el primer modulo real: tu familia se crea
-            automaticamente y desde aca podes registrar ingresos en ARS o USD.
-          </p>
-        </div>
-
-        <div className="dashboard-topline">
-          <span className="status-badge status-primary">
-            {dashboardData.family.name}
-          </span>
-          <span className="status-badge status-accent">
-            Moneda base {dashboardData.family.baseCurrency}
-          </span>
-          <span className="status-badge status-warning">
-            {dashboardData.monthIncomeCount} ingresos este mes
-          </span>
-        </div>
-      </section>
-
-      {incomeCreated ? (
-        <div className="feedback success">
-          El ingreso se guardo correctamente y ya impacta en tu resumen.
-        </div>
-      ) : null}
-
-      {incomeError ? <div className="feedback error">{incomeError}</div> : null}
-
-      <section className="dashboard-grid">
-        <SummaryCard
-          description="Convertidos y consolidados en la moneda de la familia."
-          label="Ingresos del mes"
-          tone="primary"
-          value={monthIncomeTotalLabel}
-        />
-        <SummaryCard
-          description="Cantidad de movimientos de ingreso cargados en el mes actual."
-          label="Ingresos cargados"
-          tone="warning"
-          value={String(dashboardData.monthIncomeCount)}
-        />
-        <SummaryCard
-          description="Todavia no activamos el modulo de ahorro. Por ahora queda en cero."
-          label="Ahorro reservado"
-          tone="good"
-          value={formatMoney(0, dashboardData.family.baseCurrency)}
-        />
-        <SummaryCard
-          description="El modulo de egresos y cuotas es el siguiente paso para completar el flujo."
-          label="Comprometido futuro"
-          tone="danger"
-          value={formatMoney(0, dashboardData.family.baseCurrency)}
-        />
-        <SummaryCard
-          description="Por ahora coincide con tus ingresos, porque todavia no cargaste egresos."
-          label="Disponible real"
-          tone="good"
-          value={monthIncomeTotalLabel}
-        />
-      </section>
-
+    <ProtectedShell
+      baseCurrency={dashboardData.family.baseCurrency}
+      currentPath="/dashboard"
+      description="Tu familia ya puede cargar ingresos, egresos, ahorro, notas y revisar el calendario mensual desde una misma cuenta."
+      familyName={dashboardData.family.name}
+      title={`Hola, ${dashboardData.fullName}.`}
+      childrenAfterHeader={
+        <section className="dashboard-grid">
+          <SummaryCard
+            description="Todo lo registrado este mes en la moneda base de la familia."
+            label="Ingresos del mes"
+            tone="primary"
+            value={formatMoney(
+              dashboardData.monthIncomeTotal,
+              dashboardData.family.baseCurrency,
+            )}
+          />
+          <SummaryCard
+            description="Incluye reales, pendientes y proyectados del mes actual."
+            label="Egresos del mes"
+            tone="warning"
+            value={formatMoney(
+              dashboardData.monthExpenseTotal,
+              dashboardData.family.baseCurrency,
+            )}
+          />
+          <SummaryCard
+            description="Saldo total reservado en objetivos de ahorro."
+            label="Ahorro reservado"
+            tone="good"
+            value={formatMoney(
+              dashboardData.savingsReservedTotal,
+              dashboardData.family.baseCurrency,
+            )}
+          />
+          <SummaryCard
+            description="Cuotas y gastos pendientes posteriores a hoy."
+            label="Comprometido futuro"
+            tone="danger"
+            value={formatMoney(
+              dashboardData.committedFuture,
+              dashboardData.family.baseCurrency,
+            )}
+          />
+          <SummaryCard
+            description="Ingresos totales menos egresos pagados y ahorro reservado."
+            label="Disponible real"
+            tone={dashboardData.availableReal >= 0 ? "good" : "danger"}
+            value={formatMoney(
+              dashboardData.availableReal,
+              dashboardData.family.baseCurrency,
+            )}
+          />
+        </section>
+      }
+    >
       <section className="dashboard-columns">
-        <article className="dashboard-panel">
-          <h2>Cargar ingreso</h2>
-          <p>
-            Este bloque ya guarda datos reales en tu base. Si el ingreso esta en
-            USD, completa la cotizacion que queres usar para convertirlo a ARS.
-          </p>
-
-          <form action="/dashboard/incomes" className="income-form" method="post">
-            <label>
-              Nombre del ingreso
-              <input
-                name="title"
-                placeholder="Sueldo, freelance, venta, reintegro..."
-                required
-                type="text"
-              />
-            </label>
-
-            <div className="income-form-row">
-              <label>
-                Monto
-                <input
-                  min="0.01"
-                  name="amountOriginal"
-                  placeholder="150000"
-                  required
-                  step="0.01"
-                  type="number"
-                />
-              </label>
-
-              <label>
-                Moneda
-                <select defaultValue="ARS" name="currency">
-                  <option value="ARS">ARS</option>
-                  <option value="USD">USD</option>
-                </select>
-              </label>
+        <div className="module-stack">
+          <article className="dashboard-panel">
+            <div className="panel-head">
+              <div>
+                <h2>Distribucion del mes</h2>
+                <p>
+                  El grafico reparte el ingreso mensual entre egresos,
+                  ahorro del mes y disponible remanente.
+                </p>
+              </div>
             </div>
 
-            <div className="income-form-row">
-              <label>
-                Fecha
-                <input
-                  defaultValue={defaultIncomeDate}
-                  name="transactionDate"
-                  required
-                  type="date"
-                />
-              </label>
+            <div className="donut-layout">
+              <div className="donut-shell">
+                <div className="donut" style={{ background: donutBackground }}>
+                  <div className="donut-center">
+                    <strong>
+                      {formatMoney(
+                        dashboardData.monthIncomeTotal,
+                        dashboardData.family.baseCurrency,
+                      )}
+                    </strong>
+                    <span>Ingreso del mes</span>
+                  </div>
+                </div>
+              </div>
 
-              <label>
-                Categoria
-                <input name="category" placeholder="Trabajo, ventas, extra..." type="text" />
-              </label>
+              <div className="donut-legend">
+                <div className="legend-item">
+                  <div className="legend-label">
+                    <span className="legend-dot expenses" />
+                    <span>Egresos</span>
+                  </div>
+                  <div className="legend-value">
+                    <strong>
+                      {formatMoney(
+                        dashboardData.monthExpenseTotal,
+                        dashboardData.family.baseCurrency,
+                      )}
+                    </strong>
+                    <span>
+                      {percentLabel(dashboardData.monthExpenseTotal, donutTotal)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="legend-item">
+                  <div className="legend-label">
+                    <span className="legend-dot savings" />
+                    <span>Ahorro del mes</span>
+                  </div>
+                  <div className="legend-value">
+                    <strong>
+                      {formatMoney(
+                        monthSavingsSlice,
+                        dashboardData.family.baseCurrency,
+                      )}
+                    </strong>
+                    <span>{percentLabel(monthSavingsSlice, donutTotal)}</span>
+                  </div>
+                </div>
+
+                <div className="legend-item">
+                  <div className="legend-label">
+                    <span className="legend-dot available" />
+                    <span>Disponible mensual</span>
+                  </div>
+                  <div className="legend-value">
+                    <strong>
+                      {formatMoney(
+                        monthAvailableSlice,
+                        dashboardData.family.baseCurrency,
+                      )}
+                    </strong>
+                    <span>{percentLabel(monthAvailableSlice, donutTotal)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article className="dashboard-panel">
+            <div className="panel-head">
+              <div>
+                <h2>Accesos rapidos</h2>
+                <p>
+                  Cada modulo ya tiene formulario real y queda guardado en tu
+                  base de datos.
+                </p>
+              </div>
             </div>
 
-            <label>
-              Cotizacion a ARS
-              <input
-                min="0"
-                name="fxRateUsed"
-                placeholder="Solo si el ingreso esta en USD"
-                step="0.000001"
-                type="number"
-              />
-            </label>
-
-            <label>
-              Notas
-              <textarea
-                name="notes"
-                placeholder="Detalle opcional para recordar de donde vino este ingreso."
-                rows={4}
-              />
-            </label>
-
-            <div className="income-form-actions">
-              <button className="primary-button" type="submit">
-                Guardar ingreso
-              </button>
-              <span className="form-helper">
-                Los ingresos en ARS no necesitan cotizacion.
-              </span>
+            <div className="quick-links-grid">
+              <Link className="quick-link-card" href="/ingresos">
+                <strong>Ingresos</strong>
+                <span>Cargar entradas de dinero y revisar historial.</span>
+              </Link>
+              <Link className="quick-link-card" href="/egresos">
+                <strong>Egresos</strong>
+                <span>Registrar gastos, cuotas y recurrencias.</span>
+              </Link>
+              <Link className="quick-link-card" href="/ahorro">
+                <strong>Ahorro</strong>
+                <span>Crear objetivos y movimientos reservados.</span>
+              </Link>
+              <Link className="quick-link-card" href="/notas">
+                <strong>Notas</strong>
+                <span>Dejar mensajes internos para la familia.</span>
+              </Link>
+              <Link className="quick-link-card" href="/calendario">
+                <strong>Calendario</strong>
+                <span>Ver el mes consolidado con ingresos y egresos.</span>
+              </Link>
             </div>
-          </form>
-        </article>
+          </article>
+        </div>
 
-        <div className="timeline-list">
+        <div className="module-stack">
           <article className="timeline-card">
-            <h2>Ultimos ingresos</h2>
+            <div className="panel-head">
+              <div>
+                <h2>Proximos vencimientos</h2>
+                <p>Pagos pendientes u obligatorios de los proximos dias.</p>
+              </div>
+            </div>
+
+            {dashboardData.upcomingExpenses.length > 0 ? (
+              dashboardData.upcomingExpenses.map((expense) => (
+                <div className="timeline-row" key={expense.id}>
+                  <div>
+                    <strong>{expense.title}</strong>
+                    <span>
+                      {expense.category ?? expense.expenseKind} ·{" "}
+                      {formatShortDate(expense.dueDate)}
+                    </span>
+                  </div>
+                  <div className="timeline-amount">
+                    <strong>
+                      {formatMoney(
+                        expense.amountOriginal,
+                        expense.currency,
+                      )}
+                    </strong>
+                    <span className="timeline-tag">
+                      {expense.paymentStatus}
+                    </span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state">
+                Todavia no hay vencimientos pendientes cargados para la
+                familia.
+              </div>
+            )}
+          </article>
+
+          <article className="timeline-card">
+            <div className="panel-head">
+              <div>
+                <h2>Ultimos ingresos</h2>
+                <p>Movimientos recientes que ya impactan en el consolidado.</p>
+              </div>
+            </div>
+
             {dashboardData.recentIncomes.length > 0 ? (
               dashboardData.recentIncomes.map((income) => (
                 <div className="timeline-row" key={income.id}>
@@ -217,7 +299,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                       {formatMoney(income.amountOriginal, income.currency)}
                     </strong>
                     <span className="timeline-tag timeline-tag-income">
-                      Base {formatMoney(
+                      Base{" "}
+                      {formatMoney(
                         income.amountBaseSnapshot,
                         dashboardData.family.baseCurrency,
                       )}
@@ -227,35 +310,37 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               ))
             ) : (
               <div className="empty-state">
-                Todavia no hay ingresos guardados. Carga el primero desde el
-                formulario de la izquierda.
+                Aun no hay ingresos. Podes cargar el primero desde el modulo de
+                ingresos.
               </div>
             )}
           </article>
 
           <article className="note-card">
-            <h2>Distribucion del mes</h2>
-            <p className="note-quote">
-              Este grafico ya refleja tu ingreso real mensual. A medida que
-              agreguemos egresos y ahorro, se va a repartir entre los tres
-              segmentos.
-            </p>
-
-            <div className="donut-shell">
-              <div className="donut" style={{ background: donutBackground }}>
-                <div className="donut-center">
-                  <strong>{monthIncomeTotalLabel}</strong>
-                  <span>Ingreso total del mes</span>
-                </div>
+            <div className="panel-head">
+              <div>
+                <h2>Ultimo mensaje familiar</h2>
+                <p>La nota interna mas reciente siempre queda visible aca.</p>
               </div>
             </div>
 
-            <span className="note-author">
-              Disponible actual: {monthIncomeTotalLabel}
-            </span>
+            {dashboardData.lastNote ? (
+              <>
+                <p className="note-quote">“{dashboardData.lastNote.content}”</p>
+                <span className="note-author">
+                  {dashboardData.lastNote.authorName} ·{" "}
+                  {formatLongDate(dashboardData.lastNote.createdAt.slice(0, 10))}
+                </span>
+              </>
+            ) : (
+              <div className="empty-state">
+                Todavia no dejaron notas. Desde el modulo de notas podes guardar
+                recordatorios, acuerdos o mensajes internos.
+              </div>
+            )}
           </article>
         </div>
       </section>
-    </main>
+    </ProtectedShell>
   );
 }

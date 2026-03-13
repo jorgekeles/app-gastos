@@ -1,0 +1,155 @@
+import Link from "next/link";
+import { ProtectedShell } from "@/components/app/protected-shell";
+import { SummaryCard } from "@/components/dashboard/summary-card";
+import {
+  formatMoney,
+  getCalendarPageData,
+  type PaymentStatus,
+} from "@/lib/app-db";
+import { requireAuthUser } from "@/lib/server-auth";
+
+type CalendarPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+const weekDays = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"];
+
+function deriveStatus(status: PaymentStatus, date: string) {
+  if (status === "PENDING" && date < new Date().toISOString().slice(0, 10)) {
+    return "OVERDUE";
+  }
+
+  return status;
+}
+
+export default async function CalendarPage({
+  searchParams,
+}: CalendarPageProps) {
+  const user = await requireAuthUser();
+  const params = (await searchParams) ?? {};
+  const monthParam =
+    typeof params["month"] === "string" ? params["month"] : undefined;
+  const data = await getCalendarPageData(user, monthParam);
+  const balance = data.monthIncomeTotal - data.monthExpenseTotal;
+
+  return (
+    <ProtectedShell
+      baseCurrency={data.family.baseCurrency}
+      currentPath="/calendario"
+      description="Vista consolidada del mes con ingresos, egresos, vencimientos y proyecciones futuras."
+      familyName={data.family.name}
+      title="Calendario financiero"
+      childrenAfterHeader={
+        <section className="dashboard-grid">
+          <SummaryCard
+            description="Ingresos registrados para el mes visible."
+            label="Ingresos del mes"
+            tone="primary"
+            value={formatMoney(data.monthIncomeTotal, data.family.baseCurrency)}
+          />
+          <SummaryCard
+            description="Egresos del mes, incluyendo proyectados."
+            label="Egresos del mes"
+            tone="warning"
+            value={formatMoney(data.monthExpenseTotal, data.family.baseCurrency)}
+          />
+          <SummaryCard
+            description="Resultado del mes visible."
+            label="Balance del mes"
+            tone={balance >= 0 ? "good" : "danger"}
+            value={formatMoney(balance, data.family.baseCurrency)}
+          />
+        </section>
+      }
+    >
+      <section className="dashboard-panel">
+        <div className="panel-head">
+          <div>
+            <h2>{data.monthLabel}</h2>
+            <p>
+              Navega entre meses para revisar pasado, presente y compromisos
+              futuros.
+            </p>
+          </div>
+
+          <div className="calendar-nav">
+            <Link
+              className="secondary-button"
+              href={`/calendario?month=${data.previousMonthParam}`}
+            >
+              Mes anterior
+            </Link>
+            <Link
+              className="secondary-button"
+              href={`/calendario?month=${data.nextMonthParam}`}
+            >
+              Mes siguiente
+            </Link>
+          </div>
+        </div>
+
+        <div className="calendar-grid">
+          {weekDays.map((label) => (
+            <div className="calendar-weekday" key={label}>
+              {label}
+            </div>
+          ))}
+
+          {data.days.map((day) => (
+            <article
+              className={`calendar-day ${day.inCurrentMonth ? "" : "is-outside"}`}
+              key={day.date}
+            >
+              <div className="calendar-day-head">
+                <strong>{day.dayNumber}</strong>
+                <span>
+                  {formatMoney(
+                    day.incomeTotal - day.expenseTotal,
+                    data.family.baseCurrency,
+                  )}
+                </span>
+              </div>
+
+              {day.incomeTotal > 0 ? (
+                <div className="calendar-totals income">
+                  Ingresos {formatMoney(day.incomeTotal, data.family.baseCurrency)}
+                </div>
+              ) : null}
+
+              {day.expenseTotal > 0 ? (
+                <div className="calendar-totals expense">
+                  Egresos {formatMoney(day.expenseTotal, data.family.baseCurrency)}
+                </div>
+              ) : null}
+
+              <div className="calendar-items">
+                {day.incomes.slice(0, 2).map((income) => (
+                  <div className="calendar-item income" key={income.id}>
+                    <strong>{income.title}</strong>
+                    <span>{formatMoney(income.amountOriginal, income.currency)}</span>
+                  </div>
+                ))}
+
+                {day.expenses.slice(0, 2).map((expense) => (
+                  <div className="calendar-item expense" key={expense.id}>
+                    <strong>{expense.title}</strong>
+                    <span>
+                      {formatMoney(expense.amountOriginal, expense.currency)} ·{" "}
+                      {deriveStatus(expense.paymentStatus, expense.dueDate)}
+                    </span>
+                  </div>
+                ))}
+
+                {day.incomes.length + day.expenses.length > 4 ? (
+                  <div className="calendar-more">
+                    +{day.incomes.length + day.expenses.length - 4} mas
+                  </div>
+                ) : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </ProtectedShell>
+  );
+}

@@ -4,7 +4,23 @@ import crypto from "node:crypto";
 import postgres from "postgres";
 import type { User as AuthUser } from "@supabase/supabase-js";
 
-type CurrencyCode = "ARS" | "USD";
+export type CurrencyCode = "ARS" | "USD";
+export type ExpenseKind =
+  | "ONE_TIME"
+  | "RECURRING"
+  | "CREDIT_CARD"
+  | "MORTGAGE"
+  | "LOAN"
+  | "INSTALLMENT";
+export type PaymentStatus = "PENDING" | "PAID" | "OVERDUE" | "CANCELED";
+export type EntryMode = "ACTUAL" | "PROJECTED";
+export type RecurrenceFrequency =
+  | "WEEKLY"
+  | "BIWEEKLY"
+  | "MONTHLY"
+  | "BIMONTHLY"
+  | "QUARTERLY";
+export type SavingsDirection = "DEPOSIT" | "WITHDRAWAL" | "ADJUSTMENT";
 
 type FamilyRow = {
   id: string;
@@ -13,12 +29,14 @@ type FamilyRow = {
   defaultDisplayCurrency: CurrencyCode;
 };
 
-type MonthlyIncomeSummaryRow = {
-  total: number;
-  count: number;
+type AppContext = {
+  family: FamilyRow;
+  fullName: string;
+  userId: string;
+  email: string;
 };
 
-type IncomeRow = {
+export type IncomeRow = {
   id: string;
   title: string;
   category: string | null;
@@ -29,12 +47,82 @@ type IncomeRow = {
   notes: string | null;
 };
 
-type DashboardData = {
+export type ExpenseRow = {
+  id: string;
+  title: string;
+  category: string | null;
+  amountOriginal: number;
+  amountBaseSnapshot: number;
+  currency: CurrencyCode;
+  dueDate: string;
+  paymentStatus: PaymentStatus;
+  expenseKind: ExpenseKind;
+  entryMode: EntryMode;
+  installmentNumber: number | null;
+  totalInstallments: number | null;
+  notes: string | null;
+};
+
+export type SavingsGoalRow = {
+  id: string;
+  name: string;
+  targetAmount: number | null;
+  targetCurrency: CurrencyCode;
+  totalSavedBase: number;
+};
+
+export type SavingsTransactionRow = {
+  id: string;
+  goalId: string;
+  goalName: string;
+  direction: SavingsDirection;
+  amountOriginal: number;
+  amountBaseSnapshot: number;
+  currency: CurrencyCode;
+  transactionDate: string;
+  notes: string | null;
+};
+
+export type NoteRow = {
+  id: string;
+  content: string;
+  createdAt: string;
+  authorName: string;
+};
+
+export type CalendarDay = {
+  date: string;
+  dayNumber: number;
+  inCurrentMonth: boolean;
+  incomes: IncomeRow[];
+  expenses: ExpenseRow[];
+  incomeTotal: number;
+  expenseTotal: number;
+};
+
+export type DashboardData = {
   family: FamilyRow;
   fullName: string;
   monthIncomeTotal: number;
   monthIncomeCount: number;
+  monthExpenseTotal: number;
+  monthExpenseCount: number;
+  monthSavingsNet: number;
+  savingsReservedTotal: number;
+  committedFuture: number;
+  availableReal: number;
   recentIncomes: IncomeRow[];
+  upcomingExpenses: ExpenseRow[];
+  lastNote: NoteRow | null;
+};
+
+type NumericSummaryRow = {
+  total: number;
+};
+
+type MonthlySummaryRow = {
+  total: number;
+  count: number;
 };
 
 type IncomeInput = {
@@ -47,7 +135,41 @@ type IncomeInput = {
   fxRateUsed?: number;
 };
 
+type ExpenseInput = {
+  title: string;
+  amountOriginal: number;
+  currency: CurrencyCode;
+  dueDate: string;
+  category?: string;
+  notes?: string;
+  fxRateUsed?: number;
+  expenseKind: ExpenseKind;
+  paymentStatus: PaymentStatus;
+  recurrenceFrequency?: RecurrenceFrequency;
+  recurrenceCount?: number;
+  totalInstallments?: number;
+  currentInstallmentNumber?: number;
+};
+
+type SavingsGoalInput = {
+  name: string;
+  targetAmount?: number;
+  targetCurrency: CurrencyCode;
+};
+
+type SavingsTransactionInput = {
+  goalId: string;
+  direction: SavingsDirection;
+  amountOriginal: number;
+  currency: CurrencyCode;
+  transactionDate: string;
+  notes?: string;
+  fxRateUsed?: number;
+};
+
 const bootstrapSql = `
+create extension if not exists pgcrypto;
+
 create table if not exists public.users (
   id uuid primary key,
   email text not null unique,
@@ -100,9 +222,81 @@ create table if not exists public.incomes (
   deleted_at timestamptz
 );
 
+create table if not exists public.expenses (
+  id uuid primary key,
+  family_id uuid not null references public.families(id) on delete cascade,
+  created_by_user_id uuid not null references public.users(id) on delete restrict,
+  title text not null,
+  category text,
+  expense_kind text not null check (expense_kind in ('ONE_TIME', 'RECURRING', 'CREDIT_CARD', 'MORTGAGE', 'LOAN', 'INSTALLMENT')),
+  payment_status text not null default 'PENDING' check (payment_status in ('PENDING', 'PAID', 'OVERDUE', 'CANCELED')),
+  entry_mode text not null default 'ACTUAL' check (entry_mode in ('ACTUAL', 'PROJECTED')),
+  amount_original numeric(18, 2) not null check (amount_original > 0),
+  currency text not null check (currency in ('ARS', 'USD')),
+  due_date date not null,
+  paid_at timestamptz,
+  notes text,
+  fx_provider text,
+  fx_rate_used numeric(18, 6),
+  amount_base_snapshot numeric(18, 2) not null,
+  base_currency text not null check (base_currency in ('ARS', 'USD')),
+  series_id uuid,
+  recurrence_frequency text,
+  installment_number int,
+  total_installments int,
+  is_generated boolean not null default false,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  deleted_at timestamptz
+);
+
+create table if not exists public.savings_goals (
+  id uuid primary key,
+  family_id uuid not null references public.families(id) on delete cascade,
+  created_by_user_id uuid not null references public.users(id) on delete restrict,
+  name text not null,
+  target_amount numeric(18, 2),
+  target_currency text not null default 'ARS' check (target_currency in ('ARS', 'USD')),
+  active boolean not null default true,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.savings_transactions (
+  id uuid primary key,
+  family_id uuid not null references public.families(id) on delete cascade,
+  goal_id uuid not null references public.savings_goals(id) on delete cascade,
+  created_by_user_id uuid not null references public.users(id) on delete restrict,
+  direction text not null check (direction in ('DEPOSIT', 'WITHDRAWAL', 'ADJUSTMENT')),
+  amount_original numeric(18, 2) not null check (amount_original > 0),
+  currency text not null check (currency in ('ARS', 'USD')),
+  transaction_date date not null,
+  notes text,
+  fx_provider text,
+  fx_rate_used numeric(18, 6),
+  amount_base_snapshot numeric(18, 2) not null,
+  base_currency text not null check (base_currency in ('ARS', 'USD')),
+  created_at timestamptz not null default timezone('utc', now())
+);
+
+create table if not exists public.notes (
+  id uuid primary key,
+  family_id uuid not null references public.families(id) on delete cascade,
+  author_user_id uuid not null references public.users(id) on delete restrict,
+  content text not null,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  deleted_at timestamptz
+);
+
 create index if not exists family_members_user_id_idx on public.family_members (user_id);
 create index if not exists incomes_family_id_date_idx on public.incomes (family_id, transaction_date desc);
 create index if not exists incomes_family_id_created_by_idx on public.incomes (family_id, created_by_user_id);
+create index if not exists expenses_family_id_date_idx on public.expenses (family_id, due_date desc);
+create index if not exists expenses_family_id_status_idx on public.expenses (family_id, payment_status);
+create index if not exists savings_goals_family_id_idx on public.savings_goals (family_id);
+create index if not exists savings_transactions_goal_id_idx on public.savings_transactions (goal_id, transaction_date desc);
+create index if not exists notes_family_id_created_at_idx on public.notes (family_id, created_at desc);
 `;
 
 type GlobalDbState = typeof globalThis & {
@@ -177,18 +371,117 @@ function slugify(value: string) {
     .slice(0, 48);
 }
 
+function parseDateKey(date: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function formatDateKey(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date: string, days: number) {
+  const value = parseDateKey(date);
+  value.setUTCDate(value.getUTCDate() + days);
+  return formatDateKey(value);
+}
+
+function addMonths(date: string, months: number) {
+  const value = parseDateKey(date);
+  value.setUTCMonth(value.getUTCMonth() + months);
+  return formatDateKey(value);
+}
+
+function stepByFrequency(
+  date: string,
+  frequency: RecurrenceFrequency,
+  step: number,
+) {
+  switch (frequency) {
+    case "WEEKLY":
+      return addDays(date, 7 * step);
+    case "BIWEEKLY":
+      return addDays(date, 14 * step);
+    case "BIMONTHLY":
+      return addMonths(date, 2 * step);
+    case "QUARTERLY":
+      return addMonths(date, 3 * step);
+    case "MONTHLY":
+    default:
+      return addMonths(date, step);
+  }
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
 function currentMonthRange() {
   const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  return monthRangeFor(now.getUTCFullYear(), now.getUTCMonth() + 1);
+}
+
+function monthRangeFor(year: number, month: number) {
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const end = new Date(Date.UTC(year, month, 1));
 
   return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
+    start: formatDateKey(start),
+    end: formatDateKey(end),
+    startDate: start,
+    endDate: end,
   };
 }
 
-async function ensureUserAndFamily(authUser: AuthUser) {
+function parseMonthParam(monthParam?: string) {
+  if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+    const [year, month] = monthParam.split("-").map(Number);
+    return monthRangeFor(year, month);
+  }
+
+  return currentMonthRange();
+}
+
+function toBaseAmount(
+  amountOriginal: number,
+  currency: CurrencyCode,
+  baseCurrency: CurrencyCode,
+  fxRateUsed?: number | null,
+) {
+  if (currency === baseCurrency) {
+    return Number(amountOriginal.toFixed(2));
+  }
+
+  if (!fxRateUsed || fxRateUsed <= 0) {
+    throw new Error(
+      `Falta la cotizacion para convertir de ${currency} a ${baseCurrency}.`,
+    );
+  }
+
+  if (currency === "USD" && baseCurrency === "ARS") {
+    return Number((amountOriginal * fxRateUsed).toFixed(2));
+  }
+
+  if (currency === "ARS" && baseCurrency === "USD") {
+    return Number((amountOriginal / fxRateUsed).toFixed(2));
+  }
+
+  return Number(amountOriginal.toFixed(2));
+}
+
+function signedSavingsSqlAlias(alias: string) {
+  return `
+    coalesce(sum(
+      case ${alias}.direction
+        when 'DEPOSIT' then ${alias}.amount_base_snapshot
+        when 'WITHDRAWAL' then -${alias}.amount_base_snapshot
+        else ${alias}.amount_base_snapshot
+      end
+    ), 0)::float8
+  `;
+}
+
+async function ensureUserAndFamily(authUser: AuthUser): Promise<AppContext> {
   await ensureAppSchema();
 
   const email = authUser.email;
@@ -227,11 +520,12 @@ async function ensureUserAndFamily(authUser: AuthUser) {
     return {
       family: membership[0],
       fullName,
+      userId: authUser.id,
+      email,
     };
   }
 
   const familyId = crypto.randomUUID();
-  const memberId = crypto.randomUUID();
   const familyName = toFamilyName(fullName);
   const slug = `${slugify(familyName)}-${familyId.slice(0, 8)}`;
 
@@ -267,7 +561,7 @@ async function ensureUserAndFamily(authUser: AuthUser) {
       joined_at
     )
     values (
-      ${memberId}::uuid,
+      ${crypto.randomUUID()}::uuid,
       ${familyId}::uuid,
       ${authUser.id}::uuid,
       'ADMIN',
@@ -281,29 +575,17 @@ async function ensureUserAndFamily(authUser: AuthUser) {
     family: {
       id: familyId,
       name: familyName,
-      baseCurrency: "ARS" as CurrencyCode,
-      defaultDisplayCurrency: "ARS" as CurrencyCode,
+      baseCurrency: "ARS",
+      defaultDisplayCurrency: "ARS",
     },
     fullName,
+    userId: authUser.id,
+    email,
   };
 }
 
-export async function getDashboardData(authUser: AuthUser): Promise<DashboardData> {
-  const context = await ensureUserAndFamily(authUser);
-  const range = currentMonthRange();
-
-  const monthlyIncomeSummary = await sql<MonthlyIncomeSummaryRow[]>`
-    select
-      coalesce(sum(amount_base_snapshot), 0)::float8 as total,
-      count(*)::int as count
-    from public.incomes
-    where family_id = ${context.family.id}::uuid
-      and deleted_at is null
-      and transaction_date >= ${range.start}
-      and transaction_date < ${range.end}
-  `;
-
-  const recentIncomes = await sql<IncomeRow[]>`
+async function listRecentIncomes(familyId: string, limit = 8) {
+  return sql<IncomeRow[]>`
     select
       id,
       title,
@@ -314,25 +596,235 @@ export async function getDashboardData(authUser: AuthUser): Promise<DashboardDat
       transaction_date::text as "transactionDate",
       notes
     from public.incomes
-    where family_id = ${context.family.id}::uuid
+    where family_id = ${familyId}::uuid
       and deleted_at is null
     order by transaction_date desc, created_at desc
-    limit 8
+    limit ${limit}
   `;
-
-  return {
-    family: context.family,
-    fullName: context.fullName,
-    monthIncomeTotal: monthlyIncomeSummary[0]?.total ?? 0,
-    monthIncomeCount: monthlyIncomeSummary[0]?.count ?? 0,
-    recentIncomes,
-  };
 }
 
-export async function createIncomeForUser(
-  authUser: AuthUser,
-  input: IncomeInput,
+async function listRecentExpenses(familyId: string, limit = 12) {
+  return sql<ExpenseRow[]>`
+    select
+      id,
+      title,
+      category,
+      amount_original::float8 as "amountOriginal",
+      amount_base_snapshot::float8 as "amountBaseSnapshot",
+      currency,
+      due_date::text as "dueDate",
+      payment_status as "paymentStatus",
+      expense_kind as "expenseKind",
+      entry_mode as "entryMode",
+      installment_number as "installmentNumber",
+      total_installments as "totalInstallments",
+      notes
+    from public.expenses
+    where family_id = ${familyId}::uuid
+      and deleted_at is null
+    order by due_date desc, created_at desc
+    limit ${limit}
+  `;
+}
+
+async function listUpcomingExpenses(familyId: string, limit = 5) {
+  return sql<ExpenseRow[]>`
+    select
+      id,
+      title,
+      category,
+      amount_original::float8 as "amountOriginal",
+      amount_base_snapshot::float8 as "amountBaseSnapshot",
+      currency,
+      due_date::text as "dueDate",
+      payment_status as "paymentStatus",
+      expense_kind as "expenseKind",
+      entry_mode as "entryMode",
+      installment_number as "installmentNumber",
+      total_installments as "totalInstallments",
+      notes
+    from public.expenses
+    where family_id = ${familyId}::uuid
+      and deleted_at is null
+      and due_date >= current_date
+      and payment_status in ('PENDING', 'OVERDUE')
+    order by due_date asc, created_at asc
+    limit ${limit}
+  `;
+}
+
+async function listNotes(familyId: string, limit = 20) {
+  return sql<NoteRow[]>`
+    select
+      n.id,
+      n.content,
+      n.created_at::text as "createdAt",
+      u.full_name as "authorName"
+    from public.notes n
+    join public.users u on u.id = n.author_user_id
+    where n.family_id = ${familyId}::uuid
+      and n.deleted_at is null
+    order by n.created_at desc
+    limit ${limit}
+  `;
+}
+
+function normalizeNumber(value: number, field: string) {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${field} debe ser mayor a cero.`);
+  }
+
+  return Number(value.toFixed(2));
+}
+
+function normalizeInstallmentInput(
+  totalInstallments?: number,
+  currentInstallmentNumber?: number,
 ) {
+  const total = Math.trunc(totalInstallments ?? 0);
+  const current = Math.trunc(currentInstallmentNumber ?? 1);
+
+  if (total < 1) {
+    throw new Error("La cantidad total de cuotas debe ser al menos 1.");
+  }
+
+  if (current < 1 || current > total) {
+    throw new Error("La cuota actual debe estar entre 1 y el total de cuotas.");
+  }
+
+  return { total, current };
+}
+
+function normalizeRecurrenceCount(recurrenceCount?: number) {
+  return clamp(Math.trunc(recurrenceCount ?? 12), 1, 36);
+}
+
+function buildExpenseRows(
+  context: AppContext,
+  input: ExpenseInput,
+  amountBaseSnapshot: number,
+) {
+  const rows: Array<{
+    id: string;
+    title: string;
+    category: string | null;
+    amountOriginal: number;
+    currency: CurrencyCode;
+    dueDate: string;
+    paymentStatus: PaymentStatus;
+    expenseKind: ExpenseKind;
+    entryMode: EntryMode;
+    notes: string | null;
+    fxRateUsed: number | null;
+    amountBaseSnapshot: number;
+    baseCurrency: CurrencyCode;
+    seriesId: string | null;
+    recurrenceFrequency: RecurrenceFrequency | null;
+    installmentNumber: number | null;
+    totalInstallments: number | null;
+    isGenerated: boolean;
+  }> = [];
+
+  const normalizedTitle = input.title.trim();
+  const category = input.category?.trim() || null;
+  const notes = input.notes?.trim() || null;
+  const fxRateUsed = input.fxRateUsed ? Number(input.fxRateUsed.toFixed(6)) : null;
+
+  if (input.expenseKind === "RECURRING") {
+    const recurrenceFrequency = input.recurrenceFrequency ?? "MONTHLY";
+    const recurrenceCount = normalizeRecurrenceCount(input.recurrenceCount);
+    const seriesId = crypto.randomUUID();
+
+    for (let step = 0; step < recurrenceCount; step += 1) {
+      rows.push({
+        id: crypto.randomUUID(),
+        title: normalizedTitle,
+        category,
+        amountOriginal: input.amountOriginal,
+        currency: input.currency,
+        dueDate: stepByFrequency(input.dueDate, recurrenceFrequency, step),
+        paymentStatus: step === 0 ? input.paymentStatus : "PENDING",
+        expenseKind: input.expenseKind,
+        entryMode: step === 0 ? "ACTUAL" : "PROJECTED",
+        notes,
+        fxRateUsed,
+        amountBaseSnapshot,
+        baseCurrency: context.family.baseCurrency,
+        seriesId,
+        recurrenceFrequency,
+        installmentNumber: null,
+        totalInstallments: null,
+        isGenerated: step > 0,
+      });
+    }
+
+    return rows;
+  }
+
+  if (
+    input.expenseKind === "INSTALLMENT" ||
+    input.expenseKind === "CREDIT_CARD" ||
+    input.expenseKind === "MORTGAGE" ||
+    input.expenseKind === "LOAN"
+  ) {
+    const { total, current } = normalizeInstallmentInput(
+      input.totalInstallments,
+      input.currentInstallmentNumber,
+    );
+    const seriesId = crypto.randomUUID();
+
+    for (let installment = current; installment <= total; installment += 1) {
+      const step = installment - current;
+      rows.push({
+        id: crypto.randomUUID(),
+        title: normalizedTitle,
+        category,
+        amountOriginal: input.amountOriginal,
+        currency: input.currency,
+        dueDate: addMonths(input.dueDate, step),
+        paymentStatus: step === 0 ? input.paymentStatus : "PENDING",
+        expenseKind: input.expenseKind,
+        entryMode: step === 0 ? "ACTUAL" : "PROJECTED",
+        notes,
+        fxRateUsed,
+        amountBaseSnapshot,
+        baseCurrency: context.family.baseCurrency,
+        seriesId,
+        recurrenceFrequency: null,
+        installmentNumber: installment,
+        totalInstallments: total,
+        isGenerated: step > 0,
+      });
+    }
+
+    return rows;
+  }
+
+  rows.push({
+    id: crypto.randomUUID(),
+    title: normalizedTitle,
+    category,
+    amountOriginal: input.amountOriginal,
+    currency: input.currency,
+    dueDate: input.dueDate,
+    paymentStatus: input.paymentStatus,
+    expenseKind: input.expenseKind,
+    entryMode: "ACTUAL",
+    notes,
+    fxRateUsed,
+    amountBaseSnapshot,
+    baseCurrency: context.family.baseCurrency,
+    seriesId: null,
+    recurrenceFrequency: null,
+    installmentNumber: null,
+    totalInstallments: null,
+    isGenerated: false,
+  });
+
+  return rows;
+}
+
+export async function createIncomeForUser(authUser: AuthUser, input: IncomeInput) {
   const context = await ensureUserAndFamily(authUser);
   const normalizedTitle = input.title.trim();
 
@@ -340,26 +832,14 @@ export async function createIncomeForUser(
     throw new Error("El ingreso necesita un nombre.");
   }
 
-  if (!Number.isFinite(input.amountOriginal) || input.amountOriginal <= 0) {
-    throw new Error("El monto debe ser mayor a cero.");
-  }
-
-  const category = input.category?.trim() || null;
-  const notes = input.notes?.trim() || null;
-  const amountOriginal = Number(input.amountOriginal.toFixed(2));
+  const amountOriginal = normalizeNumber(input.amountOriginal, "El monto");
   const fxRateUsed = input.fxRateUsed ? Number(input.fxRateUsed.toFixed(6)) : null;
-
-  let amountBaseSnapshot = amountOriginal;
-
-  if (input.currency !== context.family.baseCurrency) {
-    if (!fxRateUsed || fxRateUsed <= 0) {
-      throw new Error(
-        "Si cargas un ingreso en USD, completa la cotizacion para convertirlo a ARS.",
-      );
-    }
-
-    amountBaseSnapshot = Number((amountOriginal * fxRateUsed).toFixed(2));
-  }
+  const amountBaseSnapshot = toBaseAmount(
+    amountOriginal,
+    input.currency,
+    context.family.baseCurrency,
+    fxRateUsed,
+  );
 
   await sql`
     insert into public.incomes (
@@ -380,19 +860,642 @@ export async function createIncomeForUser(
     values (
       ${crypto.randomUUID()}::uuid,
       ${context.family.id}::uuid,
-      ${authUser.id}::uuid,
+      ${context.userId}::uuid,
       ${normalizedTitle},
-      ${category},
+      ${input.category?.trim() || null},
       ${amountOriginal},
       ${input.currency},
       ${input.transactionDate},
-      ${notes},
+      ${input.notes?.trim() || null},
       ${fxRateUsed ? "manual" : null},
       ${fxRateUsed},
       ${amountBaseSnapshot},
       ${context.family.baseCurrency}
     )
   `;
+}
+
+export async function deleteIncomeForUser(authUser: AuthUser, incomeId: string) {
+  const context = await ensureUserAndFamily(authUser);
+
+  await sql`
+    update public.incomes
+    set
+      deleted_at = timezone('utc', now()),
+      updated_at = timezone('utc', now())
+    where id = ${incomeId}::uuid
+      and family_id = ${context.family.id}::uuid
+      and deleted_at is null
+  `;
+}
+
+export async function createExpenseForUser(authUser: AuthUser, input: ExpenseInput) {
+  const context = await ensureUserAndFamily(authUser);
+  const normalizedTitle = input.title.trim();
+
+  if (!normalizedTitle) {
+    throw new Error("El egreso necesita un nombre.");
+  }
+
+  const amountOriginal = normalizeNumber(input.amountOriginal, "El monto");
+  const fxRateUsed = input.fxRateUsed ? Number(input.fxRateUsed.toFixed(6)) : null;
+  const amountBaseSnapshot = toBaseAmount(
+    amountOriginal,
+    input.currency,
+    context.family.baseCurrency,
+    fxRateUsed,
+  );
+  const rows = buildExpenseRows(context, {
+    ...input,
+    title: normalizedTitle,
+    amountOriginal,
+    fxRateUsed: fxRateUsed ?? undefined,
+  }, amountBaseSnapshot);
+
+  for (const row of rows) {
+    await sql`
+      insert into public.expenses (
+        id,
+        family_id,
+        created_by_user_id,
+        title,
+        category,
+        expense_kind,
+        payment_status,
+        entry_mode,
+        amount_original,
+        currency,
+        due_date,
+        paid_at,
+        notes,
+        fx_provider,
+        fx_rate_used,
+        amount_base_snapshot,
+        base_currency,
+        series_id,
+        recurrence_frequency,
+        installment_number,
+        total_installments,
+        is_generated
+      )
+      values (
+        ${row.id}::uuid,
+        ${context.family.id}::uuid,
+        ${context.userId}::uuid,
+        ${row.title},
+        ${row.category},
+        ${row.expenseKind},
+        ${row.paymentStatus},
+        ${row.entryMode},
+        ${row.amountOriginal},
+        ${row.currency},
+        ${row.dueDate},
+        ${row.paymentStatus === "PAID" ? new Date().toISOString() : null},
+        ${row.notes},
+        ${row.fxRateUsed ? "manual" : null},
+        ${row.fxRateUsed},
+        ${row.amountBaseSnapshot},
+        ${row.baseCurrency},
+        ${row.seriesId},
+        ${row.recurrenceFrequency},
+        ${row.installmentNumber},
+        ${row.totalInstallments},
+        ${row.isGenerated}
+      )
+    `;
+  }
+}
+
+export async function updateExpenseStatusForUser(
+  authUser: AuthUser,
+  expenseId: string,
+  status: PaymentStatus,
+) {
+  const context = await ensureUserAndFamily(authUser);
+
+  await sql`
+    update public.expenses
+    set
+      payment_status = ${status},
+      paid_at = ${status === "PAID" ? new Date().toISOString() : null},
+      updated_at = timezone('utc', now())
+    where id = ${expenseId}::uuid
+      and family_id = ${context.family.id}::uuid
+      and deleted_at is null
+  `;
+}
+
+export async function deleteExpenseForUser(authUser: AuthUser, expenseId: string) {
+  const context = await ensureUserAndFamily(authUser);
+
+  await sql`
+    update public.expenses
+    set
+      deleted_at = timezone('utc', now()),
+      updated_at = timezone('utc', now())
+    where id = ${expenseId}::uuid
+      and family_id = ${context.family.id}::uuid
+      and deleted_at is null
+  `;
+}
+
+export async function createSavingsGoalForUser(
+  authUser: AuthUser,
+  input: SavingsGoalInput,
+) {
+  const context = await ensureUserAndFamily(authUser);
+  const name = input.name.trim();
+
+  if (!name) {
+    throw new Error("El objetivo necesita un nombre.");
+  }
+
+  await sql`
+    insert into public.savings_goals (
+      id,
+      family_id,
+      created_by_user_id,
+      name,
+      target_amount,
+      target_currency
+    )
+    values (
+      ${crypto.randomUUID()}::uuid,
+      ${context.family.id}::uuid,
+      ${context.userId}::uuid,
+      ${name},
+      ${input.targetAmount ? Number(input.targetAmount.toFixed(2)) : null},
+      ${input.targetCurrency}
+    )
+  `;
+}
+
+export async function createSavingsTransactionForUser(
+  authUser: AuthUser,
+  input: SavingsTransactionInput,
+) {
+  const context = await ensureUserAndFamily(authUser);
+  const amountOriginal = normalizeNumber(input.amountOriginal, "El monto");
+  const fxRateUsed = input.fxRateUsed ? Number(input.fxRateUsed.toFixed(6)) : null;
+  const amountBaseSnapshot = toBaseAmount(
+    amountOriginal,
+    input.currency,
+    context.family.baseCurrency,
+    fxRateUsed,
+  );
+
+  const goal = await sql<{ id: string }[]>`
+    select id
+    from public.savings_goals
+    where id = ${input.goalId}::uuid
+      and family_id = ${context.family.id}::uuid
+      and active = true
+    limit 1
+  `;
+
+  if (!goal[0]) {
+    throw new Error("El objetivo de ahorro no existe para tu familia.");
+  }
+
+  await sql`
+    insert into public.savings_transactions (
+      id,
+      family_id,
+      goal_id,
+      created_by_user_id,
+      direction,
+      amount_original,
+      currency,
+      transaction_date,
+      notes,
+      fx_provider,
+      fx_rate_used,
+      amount_base_snapshot,
+      base_currency
+    )
+    values (
+      ${crypto.randomUUID()}::uuid,
+      ${context.family.id}::uuid,
+      ${input.goalId}::uuid,
+      ${context.userId}::uuid,
+      ${input.direction},
+      ${amountOriginal},
+      ${input.currency},
+      ${input.transactionDate},
+      ${input.notes?.trim() || null},
+      ${fxRateUsed ? "manual" : null},
+      ${fxRateUsed},
+      ${amountBaseSnapshot},
+      ${context.family.baseCurrency}
+    )
+  `;
+}
+
+export async function createNoteForUser(authUser: AuthUser, content: string) {
+  const context = await ensureUserAndFamily(authUser);
+  const normalizedContent = content.trim();
+
+  if (!normalizedContent) {
+    throw new Error("La nota no puede estar vacia.");
+  }
+
+  await sql`
+    insert into public.notes (
+      id,
+      family_id,
+      author_user_id,
+      content
+    )
+    values (
+      ${crypto.randomUUID()}::uuid,
+      ${context.family.id}::uuid,
+      ${context.userId}::uuid,
+      ${normalizedContent}
+    )
+  `;
+}
+
+export async function getDashboardData(authUser: AuthUser): Promise<DashboardData> {
+  const context = await ensureUserAndFamily(authUser);
+  const month = currentMonthRange();
+
+  const [
+    monthIncomeSummary,
+    monthExpenseSummary,
+    monthSavingsSummary,
+    reservedSavings,
+    committedFuture,
+    totalIncome,
+    actualExpense,
+    recentIncomes,
+    upcomingExpenses,
+    notes,
+  ] = await Promise.all([
+    sql<MonthlySummaryRow[]>`
+      select
+        coalesce(sum(amount_base_snapshot), 0)::float8 as total,
+        count(*)::int as count
+      from public.incomes
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and transaction_date >= ${month.start}
+        and transaction_date < ${month.end}
+    `,
+    sql<MonthlySummaryRow[]>`
+      select
+        coalesce(sum(amount_base_snapshot), 0)::float8 as total,
+        count(*)::int as count
+      from public.expenses
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and payment_status != 'CANCELED'
+        and due_date >= ${month.start}
+        and due_date < ${month.end}
+    `,
+    sql<NumericSummaryRow[]>`
+      select ${sql.unsafe(signedSavingsSqlAlias("st"))} as total
+      from public.savings_transactions st
+      where st.family_id = ${context.family.id}::uuid
+        and st.transaction_date >= ${month.start}
+        and st.transaction_date < ${month.end}
+    `,
+    sql<NumericSummaryRow[]>`
+      select ${sql.unsafe(signedSavingsSqlAlias("st"))} as total
+      from public.savings_transactions st
+      where st.family_id = ${context.family.id}::uuid
+    `,
+    sql<NumericSummaryRow[]>`
+      select coalesce(sum(amount_base_snapshot), 0)::float8 as total
+      from public.expenses
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and payment_status in ('PENDING', 'OVERDUE')
+        and due_date > current_date
+    `,
+    sql<NumericSummaryRow[]>`
+      select coalesce(sum(amount_base_snapshot), 0)::float8 as total
+      from public.incomes
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+    `,
+    sql<NumericSummaryRow[]>`
+      select coalesce(sum(amount_base_snapshot), 0)::float8 as total
+      from public.expenses
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and payment_status = 'PAID'
+    `,
+    listRecentIncomes(context.family.id, 5),
+    listUpcomingExpenses(context.family.id, 5),
+    listNotes(context.family.id, 1),
+  ]);
+
+  const availableReal =
+    (totalIncome[0]?.total ?? 0) -
+    (actualExpense[0]?.total ?? 0) -
+    (reservedSavings[0]?.total ?? 0);
+
+  return {
+    family: context.family,
+    fullName: context.fullName,
+    monthIncomeTotal: monthIncomeSummary[0]?.total ?? 0,
+    monthIncomeCount: monthIncomeSummary[0]?.count ?? 0,
+    monthExpenseTotal: monthExpenseSummary[0]?.total ?? 0,
+    monthExpenseCount: monthExpenseSummary[0]?.count ?? 0,
+    monthSavingsNet: monthSavingsSummary[0]?.total ?? 0,
+    savingsReservedTotal: reservedSavings[0]?.total ?? 0,
+    committedFuture: committedFuture[0]?.total ?? 0,
+    availableReal,
+    recentIncomes,
+    upcomingExpenses,
+    lastNote: notes[0] ?? null,
+  };
+}
+
+export async function getIncomesPageData(authUser: AuthUser) {
+  const context = await ensureUserAndFamily(authUser);
+  const month = currentMonthRange();
+
+  const [monthSummary, allSummary, incomes] = await Promise.all([
+    sql<MonthlySummaryRow[]>`
+      select
+        coalesce(sum(amount_base_snapshot), 0)::float8 as total,
+        count(*)::int as count
+      from public.incomes
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and transaction_date >= ${month.start}
+        and transaction_date < ${month.end}
+    `,
+    sql<NumericSummaryRow[]>`
+      select coalesce(sum(amount_base_snapshot), 0)::float8 as total
+      from public.incomes
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+    `,
+    listRecentIncomes(context.family.id, 40),
+  ]);
+
+  return {
+    family: context.family,
+    fullName: context.fullName,
+    monthIncomeTotal: monthSummary[0]?.total ?? 0,
+    monthIncomeCount: monthSummary[0]?.count ?? 0,
+    allIncomeTotal: allSummary[0]?.total ?? 0,
+    incomes,
+  };
+}
+
+export async function getExpensesPageData(authUser: AuthUser) {
+  const context = await ensureUserAndFamily(authUser);
+  const month = currentMonthRange();
+
+  const [monthSummary, futureSummary, overdueSummary, expenses] = await Promise.all([
+    sql<MonthlySummaryRow[]>`
+      select
+        coalesce(sum(amount_base_snapshot), 0)::float8 as total,
+        count(*)::int as count
+      from public.expenses
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and payment_status != 'CANCELED'
+        and due_date >= ${month.start}
+        and due_date < ${month.end}
+    `,
+    sql<NumericSummaryRow[]>`
+      select coalesce(sum(amount_base_snapshot), 0)::float8 as total
+      from public.expenses
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and payment_status in ('PENDING', 'OVERDUE')
+        and due_date > current_date
+    `,
+    sql<MonthlySummaryRow[]>`
+      select
+        coalesce(sum(amount_base_snapshot), 0)::float8 as total,
+        count(*)::int as count
+      from public.expenses
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and payment_status in ('PENDING', 'OVERDUE')
+        and due_date < current_date
+    `,
+    listRecentExpenses(context.family.id, 60),
+  ]);
+
+  return {
+    family: context.family,
+    fullName: context.fullName,
+    monthExpenseTotal: monthSummary[0]?.total ?? 0,
+    monthExpenseCount: monthSummary[0]?.count ?? 0,
+    futureCommitted: futureSummary[0]?.total ?? 0,
+    overdueCount: overdueSummary[0]?.count ?? 0,
+    expenses,
+  };
+}
+
+export async function getSavingsPageData(authUser: AuthUser) {
+  const context = await ensureUserAndFamily(authUser);
+
+  const [goals, transactions, reserved] = await Promise.all([
+    sql<SavingsGoalRow[]>`
+      select
+        g.id,
+        g.name,
+        g.target_amount::float8 as "targetAmount",
+        g.target_currency as "targetCurrency",
+        coalesce(sum(
+          case st.direction
+            when 'DEPOSIT' then st.amount_base_snapshot
+            when 'WITHDRAWAL' then -st.amount_base_snapshot
+            else st.amount_base_snapshot
+          end
+        ), 0)::float8 as "totalSavedBase"
+      from public.savings_goals g
+      left join public.savings_transactions st on st.goal_id = g.id
+      where g.family_id = ${context.family.id}::uuid
+        and g.active = true
+      group by g.id
+      order by g.created_at asc
+    `,
+    sql<SavingsTransactionRow[]>`
+      select
+        st.id,
+        st.goal_id as "goalId",
+        g.name as "goalName",
+        st.direction,
+        st.amount_original::float8 as "amountOriginal",
+        st.amount_base_snapshot::float8 as "amountBaseSnapshot",
+        st.currency,
+        st.transaction_date::text as "transactionDate",
+        st.notes
+      from public.savings_transactions st
+      join public.savings_goals g on g.id = st.goal_id
+      where st.family_id = ${context.family.id}::uuid
+      order by st.transaction_date desc, st.created_at desc
+      limit 40
+    `,
+    sql<NumericSummaryRow[]>`
+      select ${sql.unsafe(signedSavingsSqlAlias("st"))} as total
+      from public.savings_transactions st
+      where st.family_id = ${context.family.id}::uuid
+    `,
+  ]);
+
+  return {
+    family: context.family,
+    fullName: context.fullName,
+    goals,
+    transactions,
+    savingsReservedTotal: reserved[0]?.total ?? 0,
+  };
+}
+
+export async function getNotesPageData(authUser: AuthUser) {
+  const context = await ensureUserAndFamily(authUser);
+  const notes = await listNotes(context.family.id, 40);
+
+  return {
+    family: context.family,
+    fullName: context.fullName,
+    notes,
+  };
+}
+
+export async function getCalendarPageData(authUser: AuthUser, monthParam?: string) {
+  const context = await ensureUserAndFamily(authUser);
+  const month = parseMonthParam(monthParam);
+  const monthStart = month.startDate;
+  const monthEnd = new Date(month.endDate);
+  monthEnd.setUTCDate(monthEnd.getUTCDate() - 1);
+
+  const startWeekOffset = (monthStart.getUTCDay() + 6) % 7;
+  const gridStart = new Date(monthStart);
+  gridStart.setUTCDate(gridStart.getUTCDate() - startWeekOffset);
+
+  const gridEnd = new Date(monthEnd);
+  const endWeekOffset = 6 - ((gridEnd.getUTCDay() + 6) % 7);
+  gridEnd.setUTCDate(gridEnd.getUTCDate() + endWeekOffset);
+
+  const [incomes, expenses, monthIncome, monthExpense] = await Promise.all([
+    sql<IncomeRow[]>`
+      select
+        id,
+        title,
+        category,
+        amount_original::float8 as "amountOriginal",
+        amount_base_snapshot::float8 as "amountBaseSnapshot",
+        currency,
+        transaction_date::text as "transactionDate",
+        notes
+      from public.incomes
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and transaction_date >= ${formatDateKey(gridStart)}
+        and transaction_date <= ${formatDateKey(gridEnd)}
+      order by transaction_date asc, created_at asc
+    `,
+    sql<ExpenseRow[]>`
+      select
+        id,
+        title,
+        category,
+        amount_original::float8 as "amountOriginal",
+        amount_base_snapshot::float8 as "amountBaseSnapshot",
+        currency,
+        due_date::text as "dueDate",
+        payment_status as "paymentStatus",
+        expense_kind as "expenseKind",
+        entry_mode as "entryMode",
+        installment_number as "installmentNumber",
+        total_installments as "totalInstallments",
+        notes
+      from public.expenses
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and due_date >= ${formatDateKey(gridStart)}
+        and due_date <= ${formatDateKey(gridEnd)}
+      order by due_date asc, created_at asc
+    `,
+    sql<NumericSummaryRow[]>`
+      select coalesce(sum(amount_base_snapshot), 0)::float8 as total
+      from public.incomes
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and transaction_date >= ${month.start}
+        and transaction_date < ${month.end}
+    `,
+    sql<NumericSummaryRow[]>`
+      select coalesce(sum(amount_base_snapshot), 0)::float8 as total
+      from public.expenses
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and payment_status != 'CANCELED'
+        and due_date >= ${month.start}
+        and due_date < ${month.end}
+    `,
+  ]);
+
+  const incomeMap = new Map<string, IncomeRow[]>();
+  const expenseMap = new Map<string, ExpenseRow[]>();
+
+  for (const income of incomes) {
+    const items = incomeMap.get(income.transactionDate) ?? [];
+    items.push(income);
+    incomeMap.set(income.transactionDate, items);
+  }
+
+  for (const expense of expenses) {
+    const items = expenseMap.get(expense.dueDate) ?? [];
+    items.push(expense);
+    expenseMap.set(expense.dueDate, items);
+  }
+
+  const days: CalendarDay[] = [];
+  const cursor = new Date(gridStart);
+
+  while (cursor <= gridEnd) {
+    const date = formatDateKey(cursor);
+    const dayIncomes = incomeMap.get(date) ?? [];
+    const dayExpenses = expenseMap.get(date) ?? [];
+
+    days.push({
+      date,
+      dayNumber: cursor.getUTCDate(),
+      inCurrentMonth: cursor >= monthStart && cursor < month.endDate,
+      incomes: dayIncomes,
+      expenses: dayExpenses,
+      incomeTotal: dayIncomes.reduce(
+        (accumulator, item) => accumulator + item.amountBaseSnapshot,
+        0,
+      ),
+      expenseTotal: dayExpenses.reduce(
+        (accumulator, item) => accumulator + item.amountBaseSnapshot,
+        0,
+      ),
+    });
+
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  const previousMonth = new Date(monthStart);
+  previousMonth.setUTCMonth(previousMonth.getUTCMonth() - 1);
+  const nextMonth = new Date(monthStart);
+  nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
+
+  return {
+    family: context.family,
+    fullName: context.fullName,
+    monthLabel: new Intl.DateTimeFormat("es-AR", {
+      month: "long",
+      year: "numeric",
+    }).format(monthStart),
+    previousMonthParam: formatDateKey(previousMonth).slice(0, 7),
+    nextMonthParam: formatDateKey(nextMonth).slice(0, 7),
+    monthIncomeTotal: monthIncome[0]?.total ?? 0,
+    monthExpenseTotal: monthExpense[0]?.total ?? 0,
+    days,
+  };
 }
 
 export function formatMoney(amount: number, currency: CurrencyCode) {
@@ -407,5 +1510,17 @@ export function formatShortDate(date: string) {
   return new Intl.DateTimeFormat("es-AR", {
     day: "numeric",
     month: "short",
-  }).format(new Date(`${date}T00:00:00`));
+  }).format(parseDateKey(date));
+}
+
+export function formatLongDate(date: string) {
+  return new Intl.DateTimeFormat("es-AR", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(parseDateKey(date));
+}
+
+export function getTodayDate() {
+  return new Date().toISOString().slice(0, 10);
 }

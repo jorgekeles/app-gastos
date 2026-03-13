@@ -32,9 +32,16 @@ export async function updateSession(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
   const isAuthPage = pathname === "/login" || pathname === "/registro";
-  const isDashboardPage = pathname.startsWith("/dashboard");
+  const isProtectedPage = [
+    "/dashboard",
+    "/ingresos",
+    "/egresos",
+    "/ahorro",
+    "/notas",
+    "/calendario",
+  ].some((route) => pathname === route || pathname.startsWith(`${route}/`));
 
-  if (!user && isDashboardPage) {
+  if (!user && isProtectedPage) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", pathname);
