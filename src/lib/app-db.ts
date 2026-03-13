@@ -133,6 +133,7 @@ export type DashboardData = {
   family: FamilyRow;
   fullName: string;
   role: FamilyRole;
+  monthLabel: string;
   monthIncomeTotal: number;
   monthIncomeArsOriginal: number;
   monthIncomeUsdOriginal: number;
@@ -1955,6 +1956,10 @@ export async function getDashboardData(authUser: AuthUser): Promise<DashboardDat
     family: context.family,
     fullName: context.fullName,
     role: context.role,
+    monthLabel: new Intl.DateTimeFormat("es-AR", {
+      month: "long",
+      year: "numeric",
+    }).format(month.startDate),
     monthIncomeTotal: monthIncomeSummary[0]?.total ?? 0,
     monthIncomeArsOriginal,
     monthIncomeUsdOriginal,

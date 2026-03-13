@@ -68,14 +68,14 @@ export default async function DashboardPage() {
     <ProtectedShell
       baseCurrency={dashboardData.family.baseCurrency}
       currentPath="/dashboard"
-      description={`Estas viendo ${dashboardData.family.name}. Desde aca controlas ingresos, egresos, ahorro, notas y calendario compartido.`}
+      description={`Estas viendo ${dashboardData.family.name}. El resumen actual corresponde a ${dashboardData.monthLabel}.`}
       familyName={dashboardData.family.name}
       title={`Hola, ${dashboardData.fullName}.`}
       childrenAfterHeader={
         <section className="dashboard-grid">
           <SummaryCard
-            description="Todo lo registrado este mes en la moneda base de la familia."
-            label="Ingresos del mes"
+            description={`Solo incluye movimientos fechados dentro de ${dashboardData.monthLabel}.`}
+            label={`Ingresos de ${dashboardData.monthLabel}`}
             tone="primary"
             value={
               <span className="summary-split-value">
@@ -300,7 +300,10 @@ export default async function DashboardPage() {
             <div className="panel-head">
               <div>
                 <h2>Ultimos ingresos</h2>
-                <p>Movimientos recientes que ya impactan en el consolidado.</p>
+                <p>
+                  Movimientos recientes de distintos meses. El resumen superior
+                  solo toma {dashboardData.monthLabel}.
+                </p>
               </div>
             </div>
 
