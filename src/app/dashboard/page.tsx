@@ -81,6 +81,12 @@ export default async function DashboardPage() {
               <span className="summary-split-value">
                 <span>ARS {formatAmountNumber(dashboardData.monthIncomeArsOriginal)}</span>
                 <span>USD {formatAmountNumber(dashboardData.monthIncomeUsdOriginal)}</span>
+                <small>
+                  Base {formatMoney(
+                    dashboardData.monthIncomeTotal,
+                    dashboardData.family.baseCurrency,
+                  )}
+                </small>
               </span>
             }
           />

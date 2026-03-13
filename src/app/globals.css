@@ -619,6 +619,13 @@ button:disabled {
   display: block;
 }
 
+.summary-split-value small {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
 .summary-description {
   margin: 12px 0 0;
   color: var(--muted);
