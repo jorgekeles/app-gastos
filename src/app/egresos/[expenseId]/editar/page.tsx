@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ProtectedShell } from "@/components/app/protected-shell";
-import { getExpenseByIdForUser, getTodayDate } from "@/lib/app-db";
+import {
+  formatMoney,
+  getCurrentBlueRate,
+  getExpenseByIdForUser,
+  getTodayDate,
+} from "@/lib/app-db";
 import { requireAuthUser } from "@/lib/server-auth";
 
 type EditExpensePageProps = {
@@ -14,6 +19,7 @@ export default async function EditExpensePage({
   const { expenseId } = await params;
   const user = await requireAuthUser();
   const data = await getExpenseByIdForUser(user, expenseId);
+  const blueRate = await getCurrentBlueRate().catch(() => null);
 
   if (!data.expense) {
     notFound();
@@ -116,17 +122,6 @@ export default async function EditExpensePage({
             </div>
 
             <label>
-              Cotizacion a moneda base
-              <input
-                min="0"
-                name="fxRateUsed"
-                placeholder="Completa solo si queda en USD"
-                step="0.000001"
-                type="number"
-              />
-            </label>
-
-            <label>
               Notas
               <textarea defaultValue={data.expense.notes ?? ""} name="notes" rows={4} />
             </label>
@@ -138,6 +133,11 @@ export default async function EditExpensePage({
               <Link className="secondary-button" href="/egresos">
                 Volver al listado
               </Link>
+              {blueRate ? (
+                <span className="form-helper">
+                  Si queda en USD, se usara blue automatica: {formatMoney(blueRate.rate, "ARS")}
+                </span>
+              ) : null}
             </div>
           </form>
         </article>

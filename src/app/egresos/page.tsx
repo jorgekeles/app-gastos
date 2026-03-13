@@ -3,6 +3,7 @@ import { SummaryCard } from "@/components/dashboard/summary-card";
 import {
   formatMoney,
   formatShortDate,
+  getCurrentBlueRate,
   getExpensesPageData,
   getTodayDate,
   type ExpenseRow,
@@ -44,6 +45,7 @@ export default async function ExpensesPage({
 }: ExpensesPageProps) {
   const user = await requireAuthUser();
   const data = await getExpensesPageData(user);
+  const blueRate = await getCurrentBlueRate().catch(() => null);
   const params = (await searchParams) ?? {};
   const success = params["success"] === "1";
   const updated = params["updated"] === "1";
@@ -214,17 +216,6 @@ export default async function ExpensesPage({
             </div>
 
             <label>
-              Cotizacion a moneda base
-              <input
-                min="0"
-                name="fxRateUsed"
-                placeholder="Solo si el egreso se carga en USD"
-                step="0.000001"
-                type="number"
-              />
-            </label>
-
-            <label>
               Notas
               <textarea
                 name="notes"
@@ -241,6 +232,11 @@ export default async function ExpensesPage({
                 Los gastos recurrentes y en cuotas generan sus futuros
                 automaticamente.
               </span>
+              {blueRate ? (
+                <span className="form-helper">
+                  Cotizacion blue automatica: {formatMoney(blueRate.rate, "ARS")}
+                </span>
+              ) : null}
             </div>
           </form>
         </article>

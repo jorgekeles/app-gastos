@@ -608,6 +608,17 @@ button:disabled {
   font-weight: 800;
 }
 
+.summary-split-value {
+  display: grid;
+  gap: 8px;
+  font-size: 1.06rem;
+  line-height: 1.2;
+}
+
+.summary-split-value span {
+  display: block;
+}
+
 .summary-description {
   margin: 12px 0 0;
   color: var(--muted);

@@ -134,6 +134,8 @@ export type DashboardData = {
   fullName: string;
   role: FamilyRole;
   monthIncomeTotal: number;
+  monthIncomeArsOriginal: number;
+  monthIncomeUsdOriginal: number;
   monthIncomeCount: number;
   monthExpenseTotal: number;
   monthExpenseCount: number;
@@ -147,6 +149,11 @@ export type DashboardData = {
 };
 
 type NumericSummaryRow = {
+  total: number;
+};
+
+type CurrencySummaryRow = {
+  currency: CurrencyCode;
   total: number;
 };
 
@@ -422,7 +429,7 @@ async function ensureAppSchema() {
 function toDisplayName(authUser: AuthUser) {
   const metadataName =
     typeof authUser.user_metadata?.full_name === "string"
-      ? authUser.user_metadata.full_name.trim()
+      ? toTitleCase(authUser.user_metadata.full_name)
       : "";
 
   if (metadataName) {
@@ -430,11 +437,11 @@ function toDisplayName(authUser: AuthUser) {
   }
 
   const localPart = authUser.email?.split("@")[0] ?? "familia";
-  return localPart.replace(/[._-]+/g, " ");
+  return toTitleCase(localPart.replace(/[._-]+/g, " "));
 }
 
 function toFamilyName(fullName: string) {
-  const firstName = fullName.trim().split(/\s+/)[0] ?? "Familia";
+  const firstName = toTitleCase(fullName.trim().split(/\s+/)[0] ?? "Familia");
   return `Familia de ${firstName}`;
 }
 
@@ -466,6 +473,15 @@ function normalizePhone(value: string) {
 
 function phoneDigits(value: string) {
   return value.replace(/[^\d]/g, "");
+}
+
+function toTitleCase(value: string) {
+  return value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
 }
 
 function parseDateKey(date: string) {
@@ -564,6 +580,65 @@ function toBaseAmount(
   }
 
   return Number(amountOriginal.toFixed(2));
+}
+
+export async function getCurrentBlueRate() {
+  const response = await fetch("https://dolarapi.com/v1/dolares/blue", {
+    headers: {
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error("No pudimos obtener la cotizacion del dolar blue.");
+  }
+
+  const data = (await response.json()) as {
+    venta?: number | string;
+    fechaActualizacion?: string;
+  };
+  const rate = Number(data.venta);
+
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw new Error("La fuente de cotizacion devolvio un valor invalido.");
+  }
+
+  return {
+    rate: Number(rate.toFixed(6)),
+    updatedAt: data.fechaActualizacion ?? null,
+    provider: "dolarapi-blue",
+  };
+}
+
+async function resolveFxSnapshot(
+  amountOriginal: number,
+  currency: CurrencyCode,
+  baseCurrency: CurrencyCode,
+  fxRateUsed?: number | null,
+) {
+  if (currency === baseCurrency) {
+    return {
+      amountBaseSnapshot: Number(amountOriginal.toFixed(2)),
+      fxProvider: null,
+      fxRateUsed: null,
+    };
+  }
+
+  const resolvedFx =
+    fxRateUsed && fxRateUsed > 0 ? Number(fxRateUsed.toFixed(6)) : null;
+  const autoFx = resolvedFx ?? (await getCurrentBlueRate()).rate;
+
+  return {
+    amountBaseSnapshot: toBaseAmount(
+      amountOriginal,
+      currency,
+      baseCurrency,
+      autoFx,
+    ),
+    fxProvider: "dolarapi-blue",
+    fxRateUsed: autoFx,
+  };
 }
 
 function signedSavingsSqlAlias(alias: string) {
@@ -955,12 +1030,11 @@ export async function createIncomeForUser(authUser: AuthUser, input: IncomeInput
   }
 
   const amountOriginal = normalizeNumber(input.amountOriginal, "El monto");
-  const fxRateUsed = input.fxRateUsed ? Number(input.fxRateUsed.toFixed(6)) : null;
-  const amountBaseSnapshot = toBaseAmount(
+  const fxSnapshot = await resolveFxSnapshot(
     amountOriginal,
     input.currency,
     context.family.baseCurrency,
-    fxRateUsed,
+    input.fxRateUsed ?? null,
   );
 
   await sql`
@@ -989,9 +1063,9 @@ export async function createIncomeForUser(authUser: AuthUser, input: IncomeInput
       ${input.currency},
       ${input.transactionDate},
       ${input.notes?.trim() || null},
-      ${fxRateUsed ? "manual" : null},
-      ${fxRateUsed},
-      ${amountBaseSnapshot},
+      ${fxSnapshot.fxProvider},
+      ${fxSnapshot.fxRateUsed},
+      ${fxSnapshot.amountBaseSnapshot},
       ${context.family.baseCurrency}
     )
   `;
@@ -1053,12 +1127,11 @@ export async function updateIncomeForUser(
   }
 
   const amountOriginal = normalizeNumber(input.amountOriginal, "El monto");
-  const fxRateUsed = input.fxRateUsed ? Number(input.fxRateUsed.toFixed(6)) : null;
-  const amountBaseSnapshot = toBaseAmount(
+  const fxSnapshot = await resolveFxSnapshot(
     amountOriginal,
     input.currency,
     context.family.baseCurrency,
-    fxRateUsed,
+    input.fxRateUsed ?? null,
   );
 
   await sql`
@@ -1070,9 +1143,9 @@ export async function updateIncomeForUser(
       currency = ${input.currency},
       transaction_date = ${input.transactionDate},
       notes = ${input.notes?.trim() || null},
-      fx_provider = ${fxRateUsed ? "manual" : null},
-      fx_rate_used = ${fxRateUsed},
-      amount_base_snapshot = ${amountBaseSnapshot},
+      fx_provider = ${fxSnapshot.fxProvider},
+      fx_rate_used = ${fxSnapshot.fxRateUsed},
+      amount_base_snapshot = ${fxSnapshot.amountBaseSnapshot},
       base_currency = ${context.family.baseCurrency},
       updated_at = timezone('utc', now())
     where id = ${incomeId}::uuid
@@ -1090,19 +1163,18 @@ export async function createExpenseForUser(authUser: AuthUser, input: ExpenseInp
   }
 
   const amountOriginal = normalizeNumber(input.amountOriginal, "El monto");
-  const fxRateUsed = input.fxRateUsed ? Number(input.fxRateUsed.toFixed(6)) : null;
-  const amountBaseSnapshot = toBaseAmount(
+  const fxSnapshot = await resolveFxSnapshot(
     amountOriginal,
     input.currency,
     context.family.baseCurrency,
-    fxRateUsed,
+    input.fxRateUsed ?? null,
   );
   const rows = buildExpenseRows(context, {
     ...input,
     title: normalizedTitle,
     amountOriginal,
-    fxRateUsed: fxRateUsed ?? undefined,
-  }, amountBaseSnapshot);
+    fxRateUsed: fxSnapshot.fxRateUsed ?? undefined,
+  }, fxSnapshot.amountBaseSnapshot);
 
   for (const row of rows) {
     await sql`
@@ -1144,7 +1216,7 @@ export async function createExpenseForUser(authUser: AuthUser, input: ExpenseInp
         ${row.dueDate},
         ${row.paymentStatus === "PAID" ? new Date().toISOString() : null},
         ${row.notes},
-        ${row.fxRateUsed ? "manual" : null},
+        ${fxSnapshot.fxProvider},
         ${row.fxRateUsed},
         ${row.amountBaseSnapshot},
         ${row.baseCurrency},
@@ -1238,12 +1310,11 @@ export async function updateExpenseForUser(
   }
 
   const amountOriginal = normalizeNumber(input.amountOriginal, "El monto");
-  const fxRateUsed = input.fxRateUsed ? Number(input.fxRateUsed.toFixed(6)) : null;
-  const amountBaseSnapshot = toBaseAmount(
+  const fxSnapshot = await resolveFxSnapshot(
     amountOriginal,
     input.currency,
     context.family.baseCurrency,
-    fxRateUsed,
+    input.fxRateUsed ?? null,
   );
 
   const currentExpense = await sql<{ seriesId: string | null }[]>`
@@ -1270,9 +1341,9 @@ export async function updateExpenseForUser(
       currency = ${input.currency},
       due_date = ${input.dueDate},
       notes = ${input.notes?.trim() || null},
-      fx_provider = ${fxRateUsed ? "manual" : null},
-      fx_rate_used = ${fxRateUsed},
-      amount_base_snapshot = ${amountBaseSnapshot},
+      fx_provider = ${fxSnapshot.fxProvider},
+      fx_rate_used = ${fxSnapshot.fxRateUsed},
+      amount_base_snapshot = ${fxSnapshot.amountBaseSnapshot},
       base_currency = ${context.family.baseCurrency},
       paid_at = ${input.paymentStatus === "PAID" ? new Date().toISOString() : null},
       updated_at = timezone('utc', now())
@@ -1319,12 +1390,11 @@ export async function createSavingsTransactionForUser(
 ) {
   const context = await ensureUserAndFamily(authUser);
   const amountOriginal = normalizeNumber(input.amountOriginal, "El monto");
-  const fxRateUsed = input.fxRateUsed ? Number(input.fxRateUsed.toFixed(6)) : null;
-  const amountBaseSnapshot = toBaseAmount(
+  const fxSnapshot = await resolveFxSnapshot(
     amountOriginal,
     input.currency,
     context.family.baseCurrency,
-    fxRateUsed,
+    input.fxRateUsed ?? null,
   );
 
   const goal = await sql<{ id: string }[]>`
@@ -1366,9 +1436,9 @@ export async function createSavingsTransactionForUser(
       ${input.currency},
       ${input.transactionDate},
       ${input.notes?.trim() || null},
-      ${fxRateUsed ? "manual" : null},
-      ${fxRateUsed},
-      ${amountBaseSnapshot},
+      ${fxSnapshot.fxProvider},
+      ${fxSnapshot.fxRateUsed},
+      ${fxSnapshot.amountBaseSnapshot},
       ${context.family.baseCurrency}
     )
   `;
@@ -1508,6 +1578,24 @@ export async function createInvitationForUser(
   return invitation[0];
 }
 
+export async function updateFamilyNameForUser(authUser: AuthUser, name: string) {
+  const context = await ensureAdminContext(authUser);
+  const normalizedName = toTitleCase(name);
+
+  if (!normalizedName) {
+    throw new Error("La familia necesita un nombre.");
+  }
+
+  await sql`
+    update public.families
+    set
+      name = ${normalizedName},
+      slug = ${`${slugify(normalizedName)}-${context.family.id.slice(0, 8)}`},
+      updated_at = timezone('utc', now())
+    where id = ${context.family.id}::uuid
+  `;
+}
+
 export async function getFamilyPageData(authUser: AuthUser) {
   const context = await ensureUserAndFamily(authUser);
 
@@ -1560,6 +1648,7 @@ export async function getFamilyPageData(authUser: AuthUser) {
     members,
     invitations,
     activeInvitationsCount: activeInvitations[0]?.count ?? 0,
+    currentTimestampIso: new Date().toISOString(),
   };
 }
 
@@ -1772,6 +1861,7 @@ export async function getDashboardData(authUser: AuthUser): Promise<DashboardDat
 
   const [
     monthIncomeSummary,
+    monthIncomeByCurrency,
     monthExpenseSummary,
     monthSavingsSummary,
     reservedSavings,
@@ -1791,6 +1881,17 @@ export async function getDashboardData(authUser: AuthUser): Promise<DashboardDat
         and deleted_at is null
         and transaction_date >= ${month.start}
         and transaction_date < ${month.end}
+    `,
+    sql<CurrencySummaryRow[]>`
+      select
+        currency,
+        coalesce(sum(amount_original), 0)::float8 as total
+      from public.incomes
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and transaction_date >= ${month.start}
+        and transaction_date < ${month.end}
+      group by currency
     `,
     sql<MonthlySummaryRow[]>`
       select
@@ -1845,12 +1946,18 @@ export async function getDashboardData(authUser: AuthUser): Promise<DashboardDat
     (totalIncome[0]?.total ?? 0) -
     (actualExpense[0]?.total ?? 0) -
     (reservedSavings[0]?.total ?? 0);
+  const monthIncomeArsOriginal =
+    monthIncomeByCurrency.find((item) => item.currency === "ARS")?.total ?? 0;
+  const monthIncomeUsdOriginal =
+    monthIncomeByCurrency.find((item) => item.currency === "USD")?.total ?? 0;
 
   return {
     family: context.family,
     fullName: context.fullName,
     role: context.role,
     monthIncomeTotal: monthIncomeSummary[0]?.total ?? 0,
+    monthIncomeArsOriginal,
+    monthIncomeUsdOriginal,
     monthIncomeCount: monthIncomeSummary[0]?.count ?? 0,
     monthExpenseTotal: monthExpenseSummary[0]?.total ?? 0,
     monthExpenseCount: monthExpenseSummary[0]?.count ?? 0,
@@ -1868,7 +1975,7 @@ export async function getIncomesPageData(authUser: AuthUser) {
   const context = await ensureUserAndFamily(authUser);
   const month = currentMonthRange();
 
-  const [monthSummary, allSummary, incomes] = await Promise.all([
+  const [monthSummary, monthByCurrency, allSummary, incomes] = await Promise.all([
     sql<MonthlySummaryRow[]>`
       select
         coalesce(sum(amount_base_snapshot), 0)::float8 as total,
@@ -1878,6 +1985,17 @@ export async function getIncomesPageData(authUser: AuthUser) {
         and deleted_at is null
         and transaction_date >= ${month.start}
         and transaction_date < ${month.end}
+    `,
+    sql<CurrencySummaryRow[]>`
+      select
+        currency,
+        coalesce(sum(amount_original), 0)::float8 as total
+      from public.incomes
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and transaction_date >= ${month.start}
+        and transaction_date < ${month.end}
+      group by currency
     `,
     sql<NumericSummaryRow[]>`
       select coalesce(sum(amount_base_snapshot), 0)::float8 as total
@@ -1892,6 +2010,10 @@ export async function getIncomesPageData(authUser: AuthUser) {
     family: context.family,
     fullName: context.fullName,
     monthIncomeTotal: monthSummary[0]?.total ?? 0,
+    monthIncomeArsOriginal:
+      monthByCurrency.find((item) => item.currency === "ARS")?.total ?? 0,
+    monthIncomeUsdOriginal:
+      monthByCurrency.find((item) => item.currency === "USD")?.total ?? 0,
     monthIncomeCount: monthSummary[0]?.count ?? 0,
     allIncomeTotal: allSummary[0]?.total ?? 0,
     incomes,
@@ -2154,6 +2276,12 @@ export function formatMoney(amount: number, currency: CurrencyCode) {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
     currency,
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+export function formatAmountNumber(amount: number) {
+  return new Intl.NumberFormat("es-AR", {
     maximumFractionDigits: 0,
   }).format(amount);
 }

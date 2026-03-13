@@ -3,9 +3,11 @@ import { redirect } from "next/navigation";
 import { ProtectedShell } from "@/components/app/protected-shell";
 import { SummaryCard } from "@/components/dashboard/summary-card";
 import {
+  formatAmountNumber,
   formatLongDate,
   formatMoney,
   formatShortDate,
+  getCurrentBlueRate,
   getDashboardData,
 } from "@/lib/app-db";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -46,6 +48,7 @@ export default async function DashboardPage() {
   }
 
   const dashboardData = await getDashboardData(user);
+  const blueRate = await getCurrentBlueRate().catch(() => null);
   const monthSavingsSlice = Math.max(dashboardData.monthSavingsNet, 0);
   const monthAvailableSlice = Math.max(
     dashboardData.monthIncomeTotal -
@@ -65,7 +68,7 @@ export default async function DashboardPage() {
     <ProtectedShell
       baseCurrency={dashboardData.family.baseCurrency}
       currentPath="/dashboard"
-      description="Tu familia ya puede cargar ingresos, egresos, ahorro, notas y revisar el calendario mensual desde una misma cuenta."
+      description={`Estas viendo ${dashboardData.family.name}. Desde aca controlas ingresos, egresos, ahorro, notas y calendario compartido.`}
       familyName={dashboardData.family.name}
       title={`Hola, ${dashboardData.fullName}.`}
       childrenAfterHeader={
@@ -74,10 +77,12 @@ export default async function DashboardPage() {
             description="Todo lo registrado este mes en la moneda base de la familia."
             label="Ingresos del mes"
             tone="primary"
-            value={formatMoney(
-              dashboardData.monthIncomeTotal,
-              dashboardData.family.baseCurrency,
-            )}
+            value={
+              <span className="summary-split-value">
+                <span>ARS {formatAmountNumber(dashboardData.monthIncomeArsOriginal)}</span>
+                <span>USD {formatAmountNumber(dashboardData.monthIncomeUsdOriginal)}</span>
+              </span>
+            }
           />
           <SummaryCard
             description="Incluye reales, pendientes y proyectados del mes actual."
@@ -137,11 +142,11 @@ export default async function DashboardPage() {
                   <div className="donut-center">
                     <strong>
                       {formatMoney(
-                        dashboardData.monthIncomeTotal,
+                        dashboardData.availableReal,
                         dashboardData.family.baseCurrency,
                       )}
                     </strong>
-                    <span>Ingreso del mes</span>
+                    <span>Disponible real</span>
                   </div>
                 </div>
               </div>
@@ -237,6 +242,11 @@ export default async function DashboardPage() {
                 <span>Invitar miembros y administrar accesos compartidos.</span>
               </Link>
             </div>
+            {blueRate ? (
+              <span className="note-author">
+                Dolar blue automatico: {formatMoney(blueRate.rate, "ARS")}
+              </span>
+            ) : null}
           </article>
         </div>
 

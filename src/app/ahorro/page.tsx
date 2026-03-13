@@ -3,6 +3,7 @@ import { SummaryCard } from "@/components/dashboard/summary-card";
 import {
   formatMoney,
   formatShortDate,
+  getCurrentBlueRate,
   getSavingsPageData,
   getTodayDate,
 } from "@/lib/app-db";
@@ -24,6 +25,7 @@ function parsePositiveNumber(value: string | string[] | undefined) {
 export default async function SavingsPage({ searchParams }: SavingsPageProps) {
   const user = await requireAuthUser();
   const data = await getSavingsPageData(user);
+  const blueRate = await getCurrentBlueRate().catch(() => null);
   const params = (await searchParams) ?? {};
   const goalCreated = params["goalCreated"] === "1";
   const movementCreated = params["movementCreated"] === "1";
@@ -187,17 +189,6 @@ export default async function SavingsPage({ searchParams }: SavingsPageProps) {
               </div>
 
               <label>
-                Cotizacion a moneda base
-                <input
-                  min="0"
-                  name="fxRateUsed"
-                  placeholder="Solo si el movimiento se carga en USD"
-                  step="0.000001"
-                  type="number"
-                />
-              </label>
-
-              <label>
                 Notas
                 <textarea name="notes" placeholder="Detalle opcional del movimiento." rows={4} />
               </label>
@@ -208,6 +199,10 @@ export default async function SavingsPage({ searchParams }: SavingsPageProps) {
               {data.goals.length === 0 ? (
                 <span className="form-helper">
                   Primero crea un objetivo para poder registrar movimientos.
+                </span>
+              ) : blueRate ? (
+                <span className="form-helper">
+                  Si cargas USD, se usa blue automatica: {formatMoney(blueRate.rate, "ARS")}
                 </span>
               ) : null}
             </form>

@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
+
 type SummaryCardProps = {
   label: string;
-  value: string;
+  value: ReactNode;
   description?: string;
   tone?: "neutral" | "primary" | "good" | "warning" | "danger";
 };

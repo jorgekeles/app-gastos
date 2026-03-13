@@ -1,8 +1,10 @@
 import { ProtectedShell } from "@/components/app/protected-shell";
 import { SummaryCard } from "@/components/dashboard/summary-card";
 import {
+  formatAmountNumber,
   formatMoney,
   formatShortDate,
+  getCurrentBlueRate,
   getIncomesPageData,
   getTodayDate,
 } from "@/lib/app-db";
@@ -15,6 +17,7 @@ type IncomesPageProps = {
 export default async function IncomesPage({ searchParams }: IncomesPageProps) {
   const user = await requireAuthUser();
   const data = await getIncomesPageData(user);
+  const blueRate = await getCurrentBlueRate().catch(() => null);
   const params = (await searchParams) ?? {};
   const success = params["success"] === "1";
   const updated = params["updated"] === "1";
@@ -34,7 +37,12 @@ export default async function IncomesPage({ searchParams }: IncomesPageProps) {
             description="Suma total de ingresos del mes actual."
             label="Ingresos del mes"
             tone="primary"
-            value={formatMoney(data.monthIncomeTotal, data.family.baseCurrency)}
+            value={
+              <span className="summary-split-value">
+                <span>ARS {formatAmountNumber(data.monthIncomeArsOriginal)}</span>
+                <span>USD {formatAmountNumber(data.monthIncomeUsdOriginal)}</span>
+              </span>
+            }
           />
           <SummaryCard
             description="Cantidad de ingresos cargados durante este mes."
@@ -125,17 +133,6 @@ export default async function IncomesPage({ searchParams }: IncomesPageProps) {
             </div>
 
             <label>
-              Cotizacion a moneda base
-              <input
-                min="0"
-                name="fxRateUsed"
-                placeholder="Solo si el ingreso se carga en USD"
-                step="0.000001"
-                type="number"
-              />
-            </label>
-
-            <label>
               Notas
               <textarea
                 name="notes"
@@ -148,6 +145,15 @@ export default async function IncomesPage({ searchParams }: IncomesPageProps) {
               <button className="primary-button" type="submit">
                 Guardar ingreso
               </button>
+              {blueRate ? (
+                <span className="form-helper">
+                  Cotizacion blue automatica: {formatMoney(blueRate.rate, "ARS")}
+                </span>
+              ) : (
+                <span className="form-helper">
+                  Si cargas USD, la app buscara sola la cotizacion blue.
+                </span>
+              )}
             </div>
           </form>
         </article>

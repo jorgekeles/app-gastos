@@ -11,7 +11,12 @@ type FamilyPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-function invitationState(expiresAt: string, acceptedAt: string | null, revokedAt: string | null) {
+function invitationState(
+  expiresAt: string,
+  acceptedAt: string | null,
+  revokedAt: string | null,
+  currentTimestampIso: string,
+) {
   if (acceptedAt) {
     return "Aceptada";
   }
@@ -20,7 +25,7 @@ function invitationState(expiresAt: string, acceptedAt: string | null, revokedAt
     return "Revocada";
   }
 
-  if (new Date(expiresAt).getTime() < Date.now()) {
+  if (expiresAt < currentTimestampIso) {
     return "Vencida";
   }
 
@@ -31,6 +36,7 @@ export default async function FamilyPage({ searchParams }: FamilyPageProps) {
   const user = await requireAuthUser();
   const data = await getFamilyPageData(user);
   const params = (await searchParams) ?? {};
+  const familyUpdated = params["familyUpdated"] === "1";
   const created = params["created"] === "1";
   const accepted = params["accepted"] === "1";
   const error = typeof params["error"] === "string" ? params["error"] : null;
@@ -70,6 +76,11 @@ export default async function FamilyPage({ searchParams }: FamilyPageProps) {
           La invitacion se genero correctamente.
         </div>
       ) : null}
+      {familyUpdated ? (
+        <div className="feedback success">
+          El nombre de la familia se actualizo correctamente.
+        </div>
+      ) : null}
       {accepted ? (
         <div className="feedback success">
           La invitacion se acepto correctamente y el miembro ya comparte esta cuenta.
@@ -79,6 +90,35 @@ export default async function FamilyPage({ searchParams }: FamilyPageProps) {
 
       <section className="dashboard-columns">
         <div className="module-stack">
+          <article className="dashboard-panel">
+            <div className="panel-head">
+              <div>
+                <h2>Crear o editar familia</h2>
+                <p>
+                  Este nombre es el que se muestra en el dashboard y en las
+                  invitaciones compartidas.
+                </p>
+              </div>
+            </div>
+
+            {data.role === "ADMIN" ? (
+              <form action="/familia/update" className="income-form" method="post">
+                <input name="returnTo" type="hidden" value="/familia" />
+                <label>
+                  Nombre familiar
+                  <input defaultValue={data.family.name} name="name" required type="text" />
+                </label>
+                <button className="primary-button" type="submit">
+                  Guardar nombre
+                </button>
+              </form>
+            ) : (
+              <div className="empty-state">
+                Solo un administrador puede cambiar el nombre de la familia.
+              </div>
+            )}
+          </article>
+
           <article className="dashboard-panel">
             <div className="panel-head">
               <div>
@@ -241,6 +281,7 @@ export default async function FamilyPage({ searchParams }: FamilyPageProps) {
                           invitation.expiresAt,
                           invitation.acceptedAt,
                           invitation.revokedAt,
+                          data.currentTimestampIso,
                         )}
                       </span>
                     </div>
