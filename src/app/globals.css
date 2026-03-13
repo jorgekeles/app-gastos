@@ -486,6 +486,11 @@ button:disabled {
   color: var(--accent-hover);
 }
 
+.feedback.warning {
+  background: rgba(var(--warning-rgb), 0.12);
+  color: #b45309;
+}
+
 .auth-footer {
   display: flex;
   gap: 8px;

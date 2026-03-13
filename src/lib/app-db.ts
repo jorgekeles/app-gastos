@@ -119,6 +119,12 @@ export type InvitationRow = {
   createdAt: string;
 };
 
+export type CreatedInvitationResult = {
+  invitation: InvitationRow;
+  family: FamilyRow;
+  invitedByName: string;
+};
+
 export type CalendarDay = {
   date: string;
   dayNumber: number;
@@ -1501,7 +1507,7 @@ export function buildInvitationShareLinks(
 export async function createInvitationForUser(
   authUser: AuthUser,
   input: InvitationInput,
-) {
+): Promise<CreatedInvitationResult> {
   const context = await ensureAdminContext(authUser);
   const role = input.role === "ADMIN" ? "ADMIN" : "MEMBER";
   const method = input.method;
@@ -1576,7 +1582,11 @@ export async function createInvitationForUser(
       created_at::text as "createdAt"
   `;
 
-  return invitation[0];
+  return {
+    invitation: invitation[0],
+    family: context.family,
+    invitedByName: context.fullName,
+  };
 }
 
 export async function updateFamilyNameForUser(authUser: AuthUser, name: string) {

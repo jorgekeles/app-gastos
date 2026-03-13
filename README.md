@@ -33,12 +33,16 @@ Opcionales por ahora:
 
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `RESEND_API_KEY`
+- `RESEND_FROM_EMAIL`
 
 Notas:
 
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` es suficiente para el estado actual de la app.
 - Si preferis el nombre nuevo de Supabase, el codigo tambien acepta `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
 - Para `DATABASE_URL`, usar la URI del `Session pooler` con `?sslmode=require`.
+- Para enviar invitaciones familiares por email de forma automatica, configurar `RESEND_API_KEY` y `RESEND_FROM_EMAIL`.
+- `RESEND_FROM_EMAIL` debe pertenecer a un dominio verificado en Resend si queres enviar a destinatarios reales.
 
 ## Setup local
 
@@ -67,6 +71,9 @@ Notas:
    - `DATABASE_URL`
 4. Si despues necesitas tareas administrativas en servidor, agregar tambien:
    - `SUPABASE_SERVICE_ROLE_KEY`
+5. Si queres que las invitaciones familiares salgan por email automaticamente, agregar tambien:
+   - `RESEND_API_KEY`
+   - `RESEND_FROM_EMAIL`
 5. Deploy.
 
 ## Configuracion pendiente en Supabase

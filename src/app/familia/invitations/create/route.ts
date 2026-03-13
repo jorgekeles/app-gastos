@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import {
   createInvitationForUser,
+  buildInvitationShareLinks,
   type FamilyRole,
   type InvitationMethod,
 } from "@/lib/app-db";
+import {
+  isInvitationEmailDeliveryConfigured,
+  sendFamilyInvitationEmail,
+} from "@/lib/invitation-email";
 import { getSafeReturnTo, redirectWithQuery } from "@/lib/route-response";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -27,14 +32,23 @@ export async function POST(request: Request) {
 
   const formData = await request.formData();
   const returnTo = getSafeReturnTo(formData, "/familia");
+  const method = toMethod(String(formData.get("method") ?? "EMAIL"));
+  const role = toRole(String(formData.get("role") ?? "MEMBER"));
+  const email = String(formData.get("email") ?? "");
+  const phone = String(formData.get("phone") ?? "");
+  const message = String(formData.get("message") ?? "");
+
+  let createdInvitation:
+    | Awaited<ReturnType<typeof createInvitationForUser>>
+    | undefined;
 
   try {
-    await createInvitationForUser(user, {
-      method: toMethod(String(formData.get("method") ?? "EMAIL")),
-      role: toRole(String(formData.get("role") ?? "MEMBER")),
-      email: String(formData.get("email") ?? ""),
-      phone: String(formData.get("phone") ?? ""),
-      message: String(formData.get("message") ?? ""),
+    createdInvitation = await createInvitationForUser(user, {
+      method,
+      role,
+      email,
+      phone,
+      message,
     });
   } catch (error) {
     return redirectWithQuery(request, returnTo, {
@@ -45,5 +59,51 @@ export async function POST(request: Request) {
     });
   }
 
-  return redirectWithQuery(request, returnTo, { created: "1" });
+  if (method === "EMAIL") {
+    if (isInvitationEmailDeliveryConfigured()) {
+      const links = buildInvitationShareLinks(
+        createdInvitation.invitation,
+        createdInvitation.family.name,
+      );
+
+      try {
+        await sendFamilyInvitationEmail({
+          acceptUrl: links.acceptUrl,
+          familyName: createdInvitation.family.name,
+          invitedByName: createdInvitation.invitedByName,
+          message: createdInvitation.invitation.message,
+          role: createdInvitation.invitation.role,
+          to: createdInvitation.invitation.email ?? email,
+        });
+
+        return redirectWithQuery(request, returnTo, {
+          created: "1",
+          delivery: "sent",
+        });
+      } catch (error) {
+        return redirectWithQuery(request, returnTo, {
+          created: "1",
+          delivery: "failed",
+          notice:
+            error instanceof Error
+              ? `La invitacion se creo, pero el correo no pudo enviarse automaticamente: ${error.message}`
+              : "La invitacion se creo, pero el correo no pudo enviarse automaticamente.",
+        });
+      }
+    }
+
+    return redirectWithQuery(request, returnTo, {
+      created: "1",
+      delivery: "manual",
+      notice:
+        "La invitacion se creo, pero este proyecto todavia no tiene un proveedor de correo configurado. Puedes usar 'Abrir email' en la tarjeta generada.",
+    });
+  }
+
+  return redirectWithQuery(request, returnTo, {
+    created: "1",
+    delivery: "phone",
+    notice:
+      "La invitacion por telefono ya se creo. Ahora puedes compartirla por WhatsApp o SMS desde la lista.",
+  });
 }

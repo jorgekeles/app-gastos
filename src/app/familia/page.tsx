@@ -39,6 +39,8 @@ export default async function FamilyPage({ searchParams }: FamilyPageProps) {
   const familyUpdated = params["familyUpdated"] === "1";
   const created = params["created"] === "1";
   const accepted = params["accepted"] === "1";
+  const delivery = typeof params["delivery"] === "string" ? params["delivery"] : null;
+  const notice = typeof params["notice"] === "string" ? params["notice"] : null;
   const error = typeof params["error"] === "string" ? params["error"] : null;
 
   return (
@@ -72,8 +74,17 @@ export default async function FamilyPage({ searchParams }: FamilyPageProps) {
       }
     >
       {created ? (
-        <div className="feedback success">
-          La invitacion se genero correctamente.
+        <div className={`feedback ${delivery === "failed" ? "warning" : "success"}`}>
+          {delivery === "sent"
+            ? "La invitacion se creo y el correo ya fue enviado automaticamente."
+            : delivery === "phone"
+              ? "La invitacion por telefono se creo correctamente."
+              : "La invitacion se creo correctamente."}
+        </div>
+      ) : null}
+      {notice ? (
+        <div className={`feedback ${delivery === "failed" || delivery === "manual" ? "warning" : "success"}`}>
+          {notice}
         </div>
       ) : null}
       {familyUpdated ? (
@@ -124,8 +135,9 @@ export default async function FamilyPage({ searchParams }: FamilyPageProps) {
               <div>
                 <h2>Invitar por email</h2>
                 <p>
-                  Genera un link de acceso y abre el correo listo para enviarlo
-                  desde tu cliente de email.
+                  Si el proveedor de correo esta configurado, el email sale
+                  automaticamente. Si no, la invitacion queda lista para
+                  compartir manualmente.
                 </p>
               </div>
             </div>
