@@ -39,6 +39,7 @@ export default async function FamilyPage({ searchParams }: FamilyPageProps) {
   const familyUpdated = params["familyUpdated"] === "1";
   const created = params["created"] === "1";
   const accepted = params["accepted"] === "1";
+  const deleted = params["deleted"] === "1";
   const delivery = typeof params["delivery"] === "string" ? params["delivery"] : null;
   const notice = typeof params["notice"] === "string" ? params["notice"] : null;
   const error = typeof params["error"] === "string" ? params["error"] : null;
@@ -90,6 +91,11 @@ export default async function FamilyPage({ searchParams }: FamilyPageProps) {
       {familyUpdated ? (
         <div className="feedback success">
           El nombre de la familia se actualizo correctamente.
+        </div>
+      ) : null}
+      {deleted ? (
+        <div className="feedback success">
+          La invitacion se elimino correctamente y ese enlace ya no se puede usar.
         </div>
       ) : null}
       {accepted ? (
@@ -345,6 +351,22 @@ export default async function FamilyPage({ searchParams }: FamilyPageProps) {
                     >
                       Ver invitacion
                     </a>
+                    {!invitation.acceptedAt ? (
+                      <form
+                        action="/familia/invitations/revoke"
+                        method="post"
+                      >
+                        <input name="returnTo" type="hidden" value="/familia" />
+                        <input
+                          name="invitationId"
+                          type="hidden"
+                          value={invitation.id}
+                        />
+                        <button className="secondary-button destructive-button" type="submit">
+                          Eliminar invitacion
+                        </button>
+                      </form>
+                    ) : null}
                   </div>
                 </article>
               );

@@ -1639,6 +1639,7 @@ export async function getFamilyPageData(authUser: AuthUser) {
         created_at::text as "createdAt"
       from public.invitations
       where family_id = ${context.family.id}::uuid
+        and revoked_at is null
       order by created_at desc
       limit 40
     `,
@@ -1661,6 +1662,61 @@ export async function getFamilyPageData(authUser: AuthUser) {
     activeInvitationsCount: activeInvitations[0]?.count ?? 0,
     currentTimestampIso: new Date().toISOString(),
   };
+}
+
+export async function revokeInvitationForUser(
+  authUser: AuthUser,
+  invitationId: string,
+) {
+  const context = await ensureAdminContext(authUser);
+  const normalizedInvitationId = invitationId.trim();
+
+  if (!normalizedInvitationId) {
+    throw new Error("Necesitamos identificar la invitacion a eliminar.");
+  }
+
+  const invitations = await sql<
+    (InvitationRow & { familyId: string })[]
+  >`
+    select
+      id,
+      token,
+      role,
+      method,
+      email,
+      phone,
+      message,
+      expires_at::text as "expiresAt",
+      accepted_at::text as "acceptedAt",
+      revoked_at::text as "revokedAt",
+      created_at::text as "createdAt",
+      family_id as "familyId"
+    from public.invitations
+    where id = ${normalizedInvitationId}::uuid
+    limit 1
+  `;
+
+  const row = invitations[0];
+
+  if (!row || row.familyId !== context.family.id) {
+    throw new Error("La invitacion no existe en esta familia.");
+  }
+
+  if (row.acceptedAt) {
+    throw new Error("Esa invitacion ya fue aceptada y no puede eliminarse.");
+  }
+
+  if (row.revokedAt) {
+    throw new Error("Esa invitacion ya estaba eliminada.");
+  }
+
+  await sql`
+    update public.invitations
+    set
+      revoked_at = timezone('utc', now()),
+      updated_at = timezone('utc', now())
+    where id = ${row.id}::uuid
+  `;
 }
 
 export async function getInvitationPreview(
