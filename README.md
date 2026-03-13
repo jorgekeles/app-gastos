@@ -35,6 +35,7 @@ Opcionales por ahora:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `RESEND_API_KEY`
 - `RESEND_FROM_EMAIL`
+- `APP_ADMIN_EMAILS`
 
 Notas:
 
@@ -43,6 +44,7 @@ Notas:
 - Para `DATABASE_URL`, usar la URI del `Session pooler` con `?sslmode=require`.
 - Para enviar invitaciones familiares por email de forma automatica, configurar `RESEND_API_KEY` y `RESEND_FROM_EMAIL`.
 - `RESEND_FROM_EMAIL` debe pertenecer a un dominio verificado en Resend si queres enviar a destinatarios reales.
+- `APP_ADMIN_EMAILS` acepta una lista separada por comas de correos con acceso a `/admin`.
 
 ## Setup local
 

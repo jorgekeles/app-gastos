@@ -155,6 +155,29 @@ export type DashboardData = {
   lastNote: NoteRow | null;
 };
 
+export type AdminFamilyUsageRow = {
+  id: string;
+  name: string;
+  slug: string;
+  createdAt: string;
+  createdByName: string;
+  createdByEmail: string;
+  membersCount: number;
+  activeInvitationsCount: number;
+  lastActivityAt: string | null;
+  version: "TRIAL";
+  expiresAt: null;
+};
+
+export type AdminConsoleData = {
+  adminName: string;
+  totalFamilies: number;
+  totalMembers: number;
+  totalUsers: number;
+  activeFamiliesLast7Days: number;
+  families: AdminFamilyUsageRow[];
+};
+
 type NumericSummaryRow = {
   total: number;
 };
@@ -2340,6 +2363,100 @@ export async function getCalendarPageData(authUser: AuthUser, monthParam?: strin
     monthIncomeTotal: monthIncome[0]?.total ?? 0,
     monthExpenseTotal: monthExpense[0]?.total ?? 0,
     days,
+  };
+}
+
+export async function getAdminConsoleData(
+  authUser: AuthUser,
+): Promise<AdminConsoleData> {
+  await ensureAppSchema();
+  const { fullName } = await ensureAppUser(authUser);
+
+  const families = await sql<
+    (Omit<AdminFamilyUsageRow, "version" | "expiresAt">)[]
+  >`
+    with member_counts as (
+      select
+        family_id,
+        count(*)::int as "membersCount"
+      from public.family_members
+      where status = 'ACTIVE'
+      group by family_id
+    ),
+    active_invitation_counts as (
+      select
+        family_id,
+        count(*)::int as "activeInvitationsCount"
+      from public.invitations
+      where accepted_at is null
+        and revoked_at is null
+        and expires_at >= timezone('utc', now())
+      group by family_id
+    ),
+    family_last_usage as (
+      select
+        fm.family_id,
+        max(u.updated_at)::text as "lastActivityAt"
+      from public.family_members fm
+      join public.users u on u.id = fm.user_id
+      where fm.status = 'ACTIVE'
+      group by fm.family_id
+    )
+    select
+      f.id,
+      f.name,
+      f.slug,
+      f.created_at::text as "createdAt",
+      creator.full_name as "createdByName",
+      creator.email as "createdByEmail",
+      coalesce(mc."membersCount", 0)::int as "membersCount",
+      coalesce(aic."activeInvitationsCount", 0)::int as "activeInvitationsCount",
+      flu."lastActivityAt"
+    from public.families f
+    join public.users creator on creator.id = f.created_by_user_id
+    left join member_counts mc on mc.family_id = f.id
+    left join active_invitation_counts aic on aic.family_id = f.id
+    left join family_last_usage flu on flu.family_id = f.id
+    order by coalesce(flu."lastActivityAt", f.created_at::text) desc, f.created_at desc
+  `;
+
+  const totals = await sql<
+    { totalFamilies: number; totalMembers: number; totalUsers: number }[]
+  >`
+    select
+      (select count(*)::int from public.families) as "totalFamilies",
+      (
+        select count(*)::int
+        from public.family_members
+        where status = 'ACTIVE'
+      ) as "totalMembers",
+      (select count(*)::int from public.users) as "totalUsers"
+  `;
+
+  const familiesWithPlan = families.map((family) => ({
+    ...family,
+    version: "TRIAL" as const,
+    expiresAt: null,
+  }));
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const activeFamiliesLast7Days = familiesWithPlan.filter((family) => {
+    const activityAt = family.lastActivityAt ?? family.createdAt;
+
+    return new Date(activityAt).getTime() >= sevenDaysAgo;
+  }).length;
+  const summary = totals[0] ?? {
+    totalFamilies: 0,
+    totalMembers: 0,
+    totalUsers: 0,
+  };
+
+  return {
+    adminName: fullName,
+    totalFamilies: summary.totalFamilies,
+    totalMembers: summary.totalMembers,
+    totalUsers: summary.totalUsers,
+    activeFamiliesLast7Days,
+    families: familiesWithPlan,
   };
 }
 
