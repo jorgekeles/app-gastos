@@ -1,0 +1,437 @@
+generator client {
+  provider = "prisma-client"
+  output   = "./generated-client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+  PENDING
+}
+
+enum FamilyMemberRole {
+  ADMIN
+  MEMBER
+}
+
+enum FamilyMemberStatus {
+  ACTIVE
+  INVITED
+  REMOVED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum CurrencyCode {
+  ARS
+  USD
+}
+
+enum ExpenseKind {
+  ONE_TIME
+  RECURRING
+  CREDIT_CARD
+  MORTGAGE
+  LOAN
+  INSTALLMENT
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELED
+}
+
+enum EntryMode {
+  ACTUAL
+  PROJECTED
+}
+
+enum RecurrenceFrequency {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  BIMONTHLY
+  QUARTERLY
+  CUSTOM
+}
+
+enum SavingsDirection {
+  DEPOSIT
+  WITHDRAWAL
+  ADJUSTMENT
+}
+
+enum RateType {
+  BLUE_BUY
+  BLUE_SELL
+  BLUE_REFERENCE
+  OFFICIAL_BUY
+  OFFICIAL_SELL
+  MANUAL_REFERENCE
+}
+
+enum MonthlySnapshotStatus {
+  CLOSED
+  REOPENED
+  SUPERSEDED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  SOFT_DELETE
+  LOGIN
+  LOGOUT
+  INVITE_SENT
+  INVITE_ACCEPTED
+  INVITE_REVOKED
+  CLOSE_MONTH
+  REOPEN_MONTH
+  MANUAL_RATE
+}
+
+model User {
+  id                  String               @id @default(uuid()) @db.Uuid
+  email               String               @unique @db.VarChar(255)
+  passwordHash        String?              @map("password_hash") @db.Text
+  fullName            String               @map("full_name") @db.VarChar(120)
+  avatarUrl           String?              @map("avatar_url") @db.Text
+  status              UserStatus           @default(ACTIVE)
+  lastLoginAt         DateTime?            @map("last_login_at") @db.Timestamptz(6)
+  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdFamilies     Family[]             @relation("FamilyCreatedBy")
+  memberships         FamilyMember[]
+  sentInvitations     Invitation[]         @relation("InvitationSentBy")
+  acceptedInvitations Invitation[]         @relation("InvitationAcceptedBy")
+  createdIncomes      Income[]             @relation("IncomeCreatedBy")
+  createdExpenses     Expense[]            @relation("ExpenseCreatedBy")
+  createdRecurring    RecurringExpense[]   @relation("RecurringExpenseCreatedBy")
+  createdGoals        SavingsGoal[]        @relation("SavingsGoalCreatedBy")
+  createdSavings      SavingsTransaction[] @relation("SavingsTransactionCreatedBy")
+  notes               Note[]               @relation("NoteAuthor")
+  closedSnapshots     MonthlySnapshot[]    @relation("MonthlySnapshotClosedBy")
+  auditLogs           AuditLog[]           @relation("AuditActor")
+}
+
+model Family {
+  id                      String               @id @default(uuid()) @db.Uuid
+  name                    String               @db.VarChar(120)
+  slug                    String               @unique @db.VarChar(80)
+  baseCurrency            CurrencyCode         @default(ARS) @map("base_currency")
+  defaultDisplayCurrency  CurrencyCode         @default(ARS) @map("default_display_currency")
+  timezone                String               @default("America/Argentina/Buenos_Aires") @db.VarChar(60)
+  projectionHorizonMonths Int                  @default(24) @map("projection_horizon_months")
+  monthCloseDay           Int                  @default(1) @map("month_close_day")
+  createdByUserId         String               @map("created_by_user_id") @db.Uuid
+  createdAt               DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy               User                 @relation("FamilyCreatedBy", fields: [createdByUserId], references: [id])
+  members                 FamilyMember[]
+  invitations             Invitation[]
+  incomes                 Income[]
+  expenses                Expense[]
+  expenseInstallments     ExpenseInstallment[]
+  recurringExpenses       RecurringExpense[]
+  savingsGoals            SavingsGoal[]
+  savingsTransactions     SavingsTransaction[]
+  exchangeRates           ExchangeRate[]
+  notes                   Note[]
+  monthlySnapshots        MonthlySnapshot[]
+  auditLogs               AuditLog[]
+}
+
+model FamilyMember {
+  id                        String             @id @default(uuid()) @db.Uuid
+  familyId                  String             @map("family_id") @db.Uuid
+  userId                    String             @map("user_id") @db.Uuid
+  role                      FamilyMemberRole
+  status                    FamilyMemberStatus @default(ACTIVE)
+  displayCurrencyPreference CurrencyCode       @default(ARS) @map("display_currency_preference")
+  joinedAt                  DateTime?          @map("joined_at") @db.Timestamptz(6)
+  invitedByUserId           String?            @map("invited_by_user_id") @db.Uuid
+  createdAt                 DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  family                    Family             @relation(fields: [familyId], references: [id])
+  user                      User               @relation(fields: [userId], references: [id])
+
+  @@unique([familyId, userId])
+  @@index([userId, familyId])
+}
+
+model Invitation {
+  id               String           @id @default(uuid()) @db.Uuid
+  familyId         String           @map("family_id") @db.Uuid
+  email            String           @db.VarChar(255)
+  role             FamilyMemberRole
+  status           InvitationStatus @default(PENDING)
+  tokenHash        String           @unique @map("token_hash") @db.VarChar(255)
+  invitedByUserId  String           @map("invited_by_user_id") @db.Uuid
+  acceptedByUserId String?          @map("accepted_by_user_id") @db.Uuid
+  expiresAt        DateTime         @map("expires_at") @db.Timestamptz(6)
+  acceptedAt       DateTime?        @map("accepted_at") @db.Timestamptz(6)
+  revokedAt        DateTime?        @map("revoked_at") @db.Timestamptz(6)
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  family           Family           @relation(fields: [familyId], references: [id])
+  invitedBy        User             @relation("InvitationSentBy", fields: [invitedByUserId], references: [id])
+  acceptedBy       User?            @relation("InvitationAcceptedBy", fields: [acceptedByUserId], references: [id])
+
+  @@index([familyId, email, status])
+}
+
+model ExchangeRate {
+  id                  String               @id @default(uuid()) @db.Uuid
+  familyId            String               @map("family_id") @db.Uuid
+  provider            String               @db.VarChar(80)
+  rateType            RateType             @map("rate_type")
+  baseCurrency        CurrencyCode         @map("base_currency")
+  quoteCurrency       CurrencyCode         @map("quote_currency")
+  buyRate             Decimal?             @map("buy_rate") @db.Decimal(18, 6)
+  sellRate            Decimal?             @map("sell_rate") @db.Decimal(18, 6)
+  referenceRate       Decimal              @map("reference_rate") @db.Decimal(18, 6)
+  sourceTimestamp     DateTime             @map("source_timestamp") @db.Timestamptz(6)
+  fetchedAt           DateTime             @default(now()) @map("fetched_at") @db.Timestamptz(6)
+  sourceUrl           String?              @map("source_url") @db.Text
+  rawPayload          Json?                @map("raw_payload")
+  family              Family               @relation(fields: [familyId], references: [id])
+  incomes             Income[]
+  expenses            Expense[]
+  expenseInstallments ExpenseInstallment[]
+  savingsTransactions SavingsTransaction[]
+  monthlySnapshots    MonthlySnapshot[]
+
+  @@index([familyId, baseCurrency, quoteCurrency, provider, fetchedAt(sort: Desc)])
+}
+
+model Income {
+  id                 String        @id @default(uuid()) @db.Uuid
+  familyId           String        @map("family_id") @db.Uuid
+  createdByUserId    String        @map("created_by_user_id") @db.Uuid
+  title              String        @db.VarChar(140)
+  category           String?       @db.VarChar(80)
+  amountOriginal     Decimal       @map("amount_original") @db.Decimal(18, 2)
+  currency           CurrencyCode
+  transactionDate    DateTime      @map("transaction_date") @db.Date
+  notes              String?       @db.Text
+  fxRateId           String?       @map("fx_rate_id") @db.Uuid
+  fxProvider         String?       @map("fx_provider") @db.VarChar(80)
+  fxRateUsed         Decimal?      @map("fx_rate_used") @db.Decimal(18, 6)
+  amountBaseSnapshot Decimal       @map("amount_base_snapshot") @db.Decimal(18, 2)
+  baseCurrency       CurrencyCode  @map("base_currency")
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime?     @map("deleted_at") @db.Timestamptz(6)
+  family             Family        @relation(fields: [familyId], references: [id])
+  createdBy          User          @relation("IncomeCreatedBy", fields: [createdByUserId], references: [id])
+  exchangeRate       ExchangeRate? @relation(fields: [fxRateId], references: [id])
+
+  @@index([familyId, transactionDate(sort: Desc)])
+  @@index([familyId, createdByUserId])
+}
+
+model Expense {
+  id                        String               @id @default(uuid()) @db.Uuid
+  familyId                  String               @map("family_id") @db.Uuid
+  createdByUserId           String               @map("created_by_user_id") @db.Uuid
+  recurringExpenseId        String?              @map("recurring_expense_id") @db.Uuid
+  title                     String               @db.VarChar(140)
+  category                  String?              @db.VarChar(80)
+  expenseKind               ExpenseKind          @map("expense_kind")
+  paymentStatus             PaymentStatus?       @default(PENDING) @map("payment_status")
+  entryMode                 EntryMode?           @default(ACTUAL) @map("entry_mode")
+  amountOriginal            Decimal?             @map("amount_original") @db.Decimal(18, 2)
+  currency                  CurrencyCode
+  dueDate                   DateTime?            @map("due_date") @db.Date
+  paidAt                    DateTime?            @map("paid_at") @db.Timestamptz(6)
+  notes                     String?              @db.Text
+  fxRateId                  String?              @map("fx_rate_id") @db.Uuid
+  fxProvider                String?              @map("fx_provider") @db.VarChar(80)
+  fxRateUsed                Decimal?             @map("fx_rate_used") @db.Decimal(18, 6)
+  amountBaseSnapshot        Decimal?             @map("amount_base_snapshot") @db.Decimal(18, 2)
+  baseCurrency              CurrencyCode         @map("base_currency")
+  totalInstallments         Int?                 @map("total_installments")
+  currentInstallmentNumber  Int?                 @map("current_installment_number")
+  installmentAmountOriginal Decimal?             @map("installment_amount_original") @db.Decimal(18, 2)
+  installmentStartDate      DateTime?            @map("installment_start_date") @db.Date
+  estimatedEndDate          DateTime?            @map("estimated_end_date") @db.Date
+  cardName                  String?              @map("card_name") @db.VarChar(80)
+  lenderName                String?              @map("lender_name") @db.VarChar(120)
+  isGenerated               Boolean              @default(false) @map("is_generated")
+  createdAt                 DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt                 DateTime?            @map("deleted_at") @db.Timestamptz(6)
+  family                    Family               @relation(fields: [familyId], references: [id])
+  createdBy                 User                 @relation("ExpenseCreatedBy", fields: [createdByUserId], references: [id])
+  recurringExpense          RecurringExpense?    @relation(fields: [recurringExpenseId], references: [id])
+  exchangeRate              ExchangeRate?        @relation(fields: [fxRateId], references: [id])
+  installmentRows           ExpenseInstallment[]
+
+  @@index([familyId, dueDate, paymentStatus])
+  @@index([familyId, category, dueDate])
+  @@index([familyId, recurringExpenseId])
+}
+
+model ExpenseInstallment {
+  id                 String        @id @default(uuid()) @db.Uuid
+  familyId           String        @map("family_id") @db.Uuid
+  expenseId          String        @map("expense_id") @db.Uuid
+  installmentNumber  Int           @map("installment_number")
+  totalInstallments  Int           @map("total_installments")
+  dueDate            DateTime      @map("due_date") @db.Date
+  paidAt             DateTime?     @map("paid_at") @db.Timestamptz(6)
+  paymentStatus      PaymentStatus @default(PENDING) @map("payment_status")
+  entryMode          EntryMode     @default(PROJECTED) @map("entry_mode")
+  amountOriginal     Decimal       @map("amount_original") @db.Decimal(18, 2)
+  currency           CurrencyCode
+  notes              String?       @db.Text
+  fxRateId           String?       @map("fx_rate_id") @db.Uuid
+  fxProvider         String?       @map("fx_provider") @db.VarChar(80)
+  fxRateUsed         Decimal?      @map("fx_rate_used") @db.Decimal(18, 6)
+  amountBaseSnapshot Decimal       @map("amount_base_snapshot") @db.Decimal(18, 2)
+  baseCurrency       CurrencyCode  @map("base_currency")
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  family             Family        @relation(fields: [familyId], references: [id])
+  expense            Expense       @relation(fields: [expenseId], references: [id])
+  exchangeRate       ExchangeRate? @relation(fields: [fxRateId], references: [id])
+
+  @@unique([expenseId, installmentNumber])
+  @@index([familyId, dueDate, paymentStatus])
+}
+
+model RecurringExpense {
+  id                 String              @id @default(uuid()) @db.Uuid
+  familyId           String              @map("family_id") @db.Uuid
+  createdByUserId    String              @map("created_by_user_id") @db.Uuid
+  title              String              @db.VarChar(140)
+  category           String?             @db.VarChar(80)
+  amountOriginal     Decimal             @map("amount_original") @db.Decimal(18, 2)
+  currency           CurrencyCode
+  frequency          RecurrenceFrequency
+  intervalValue      Int                 @default(1) @map("interval_value")
+  startDate          DateTime            @map("start_date") @db.Date
+  endDate            DateTime?           @map("end_date") @db.Date
+  nextOccurrenceDate DateTime?           @map("next_occurrence_date") @db.Date
+  active             Boolean             @default(true)
+  notes              String?             @db.Text
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  family             Family              @relation(fields: [familyId], references: [id])
+  createdBy          User                @relation("RecurringExpenseCreatedBy", fields: [createdByUserId], references: [id])
+  generatedExpenses  Expense[]
+
+  @@index([familyId, active, nextOccurrenceDate])
+}
+
+model SavingsGoal {
+  id                  String               @id @default(uuid()) @db.Uuid
+  familyId            String               @map("family_id") @db.Uuid
+  createdByUserId     String               @map("created_by_user_id") @db.Uuid
+  name                String               @db.VarChar(120)
+  targetAmount        Decimal?             @map("target_amount") @db.Decimal(18, 2)
+  targetCurrency      CurrencyCode?        @map("target_currency")
+  monthlyTargetAmount Decimal?             @map("monthly_target_amount") @db.Decimal(18, 2)
+  icon                String?              @db.VarChar(40)
+  color               String?              @db.VarChar(20)
+  active              Boolean              @default(true)
+  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  family              Family               @relation(fields: [familyId], references: [id])
+  createdBy           User                 @relation("SavingsGoalCreatedBy", fields: [createdByUserId], references: [id])
+  transactions        SavingsTransaction[]
+
+  @@index([familyId, active])
+}
+
+model SavingsTransaction {
+  id                 String           @id @default(uuid()) @db.Uuid
+  familyId           String           @map("family_id") @db.Uuid
+  goalId             String           @map("goal_id") @db.Uuid
+  createdByUserId    String           @map("created_by_user_id") @db.Uuid
+  direction          SavingsDirection
+  amountOriginal     Decimal          @map("amount_original") @db.Decimal(18, 2)
+  currency           CurrencyCode
+  transactionDate    DateTime         @map("transaction_date") @db.Date
+  notes              String?          @db.Text
+  fxRateId           String?          @map("fx_rate_id") @db.Uuid
+  fxProvider         String?          @map("fx_provider") @db.VarChar(80)
+  fxRateUsed         Decimal?         @map("fx_rate_used") @db.Decimal(18, 6)
+  amountBaseSnapshot Decimal          @map("amount_base_snapshot") @db.Decimal(18, 2)
+  baseCurrency       CurrencyCode     @map("base_currency")
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  family             Family           @relation(fields: [familyId], references: [id])
+  goal               SavingsGoal      @relation(fields: [goalId], references: [id])
+  createdBy          User             @relation("SavingsTransactionCreatedBy", fields: [createdByUserId], references: [id])
+  exchangeRate       ExchangeRate?    @relation(fields: [fxRateId], references: [id])
+
+  @@index([familyId, transactionDate(sort: Desc)])
+  @@index([goalId, transactionDate(sort: Desc)])
+}
+
+model Note {
+  id           String    @id @default(uuid()) @db.Uuid
+  familyId     String    @map("family_id") @db.Uuid
+  authorUserId String    @map("author_user_id") @db.Uuid
+  content      String    @db.Text
+  isPinned     Boolean   @default(false) @map("is_pinned")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+  family       Family    @relation(fields: [familyId], references: [id])
+  author       User      @relation("NoteAuthor", fields: [authorUserId], references: [id])
+
+  @@index([familyId, createdAt(sort: Desc)])
+  @@index([familyId, isPinned])
+}
+
+model MonthlySnapshot {
+  id              String                @id @default(uuid()) @db.Uuid
+  familyId        String                @map("family_id") @db.Uuid
+  year            Int
+  month           Int
+  baseCurrency    CurrencyCode          @map("base_currency")
+  displayCurrency CurrencyCode          @map("display_currency")
+  closingRateId   String?               @map("closing_rate_id") @db.Uuid
+  totalsJson      Json                  @map("totals_json")
+  notesJson       Json?                 @map("notes_json")
+  closedByUserId  String                @map("closed_by_user_id") @db.Uuid
+  closedAt        DateTime              @map("closed_at") @db.Timestamptz(6)
+  reopenedAt      DateTime?             @map("reopened_at") @db.Timestamptz(6)
+  status          MonthlySnapshotStatus @default(CLOSED)
+  family          Family                @relation(fields: [familyId], references: [id])
+  closingRate     ExchangeRate?         @relation(fields: [closingRateId], references: [id])
+  closedBy        User                  @relation("MonthlySnapshotClosedBy", fields: [closedByUserId], references: [id])
+
+  @@unique([familyId, year, month])
+  @@index([familyId, year, month(sort: Desc)])
+}
+
+model AuditLog {
+  id          BigInt      @id @default(autoincrement())
+  familyId    String      @map("family_id") @db.Uuid
+  actorUserId String?     @map("actor_user_id") @db.Uuid
+  entityType  String      @map("entity_type") @db.VarChar(80)
+  entityId    String?     @map("entity_id") @db.Uuid
+  action      AuditAction
+  beforeJson  Json?       @map("before_json")
+  afterJson   Json?       @map("after_json")
+  ipAddress   String?     @map("ip_address") @db.VarChar(64)
+  userAgent   String?     @map("user_agent") @db.Text
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  family      Family      @relation(fields: [familyId], references: [id])
+  actor       User?       @relation("AuditActor", fields: [actorUserId], references: [id])
+
+  @@index([familyId, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
+}
