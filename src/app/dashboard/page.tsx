@@ -12,6 +12,10 @@ import {
 } from "@/lib/app-db";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
+type DashboardPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
 function buildDonutBackground(expenses: number, savings: number, available: number) {
   const total = expenses + savings + available;
 
@@ -37,7 +41,7 @@ function percentLabel(value: number, total: number) {
   return `${((value / total) * 100).toFixed(1)}%`;
 }
 
-export default async function DashboardPage() {
+export default async function DashboardPage({ searchParams }: DashboardPageProps) {
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
@@ -48,6 +52,10 @@ export default async function DashboardPage() {
   }
 
   const dashboardData = await getDashboardData(user);
+  const params = (await searchParams) ?? {};
+  const joined = params["joined"] === "1";
+  const joinedFamily =
+    typeof params["joinedFamily"] === "string" ? params["joinedFamily"] : null;
   const blueRate = await getCurrentBlueRate().catch(() => null);
   const monthSavingsSlice = Math.max(dashboardData.monthSavingsNet, 0);
   const monthAvailableSlice = Math.max(
@@ -129,6 +137,12 @@ export default async function DashboardPage() {
         </section>
       }
     >
+      {joined && joinedFamily ? (
+        <div className="feedback success">
+          Ya quedaste dentro de la familia <strong>{joinedFamily}</strong>.
+        </div>
+      ) : null}
+
       <section className="dashboard-columns">
         <div className="module-stack">
           <article className="dashboard-panel">

@@ -178,6 +178,12 @@ export type AdminConsoleData = {
   families: AdminFamilyUsageRow[];
 };
 
+export type AcceptedInvitationResult = {
+  familyId: string;
+  familyName: string;
+  role: FamilyRole;
+};
+
 type NumericSummaryRow = {
   total: number;
 };
@@ -1679,6 +1685,7 @@ export async function getFamilyPageData(authUser: AuthUser) {
   return {
     family: context.family,
     fullName: context.fullName,
+    currentUserId: context.userId,
     role: context.role,
     members,
     invitations,
@@ -1848,7 +1855,7 @@ export async function acceptInvitationForUser(authUser: AuthUser, token: string)
   const { email } = await ensureAppUser(authUser);
 
   const invitation = await sql<
-    (InvitationRow & { familyId: string })[]
+    (InvitationRow & { familyId: string; familyName: string })[]
   >`
     select
       id,
@@ -1862,8 +1869,10 @@ export async function acceptInvitationForUser(authUser: AuthUser, token: string)
       accepted_at::text as "acceptedAt",
       revoked_at::text as "revokedAt",
       created_at::text as "createdAt",
-      family_id as "familyId"
+      family_id as "familyId",
+      f.name as "familyName"
     from public.invitations
+    join public.families f on f.id = public.invitations.family_id
     where token = ${token}
     limit 1
   `;
@@ -1942,6 +1951,65 @@ export async function acceptInvitationForUser(authUser: AuthUser, token: string)
       accepted_by_user_id = ${authUser.id}::uuid,
       updated_at = timezone('utc', now())
     where id = ${row.id}::uuid
+  `;
+
+  return {
+    familyId: row.familyId,
+    familyName: row.familyName,
+    role: row.role,
+  } satisfies AcceptedInvitationResult;
+}
+
+export async function removeFamilyMemberForUser(
+  authUser: AuthUser,
+  memberUserId: string,
+) {
+  const context = await ensureAdminContext(authUser);
+  const normalizedMemberUserId = memberUserId.trim();
+
+  if (!normalizedMemberUserId) {
+    throw new Error("Necesitamos identificar al miembro que quieres eliminar.");
+  }
+
+  if (normalizedMemberUserId === context.userId) {
+    throw new Error("No puedes eliminar tu propio acceso desde esta pantalla.");
+  }
+
+  const memberships = await sql<
+    (FamilyMemberRow & { userId: string; status: string })[]
+  >`
+    select
+      u.id as "userId",
+      u.id,
+      u.full_name as "fullName",
+      u.email,
+      fm.role,
+      fm.joined_at::text as "joinedAt",
+      fm.status
+    from public.family_members fm
+    join public.users u on u.id = fm.user_id
+    where fm.family_id = ${context.family.id}::uuid
+      and fm.user_id = ${normalizedMemberUserId}::uuid
+    limit 1
+  `;
+
+  const row = memberships[0];
+
+  if (!row) {
+    throw new Error("Ese miembro ya no pertenece a esta familia.");
+  }
+
+  if (row.status !== "ACTIVE") {
+    throw new Error("Ese miembro ya no esta activo en la familia.");
+  }
+
+  await sql`
+    update public.family_members
+    set
+      status = 'REMOVED',
+      updated_at = timezone('utc', now())
+    where family_id = ${context.family.id}::uuid
+      and user_id = ${normalizedMemberUserId}::uuid
   `;
 }
 

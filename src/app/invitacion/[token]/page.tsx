@@ -20,6 +20,20 @@ export default async function InvitationPage({
   const preview = await getInvitationPreview(token, user);
   const query = (await searchParams) ?? {};
   const error = typeof query["error"] === "string" ? query["error"] : null;
+  const registerQuery = new URLSearchParams({
+    next: `/invitacion/${token}`,
+  });
+
+  if (preview?.invitation.email) {
+    registerQuery.set("inviteEmail", preview.invitation.email);
+  }
+
+  if (preview?.family.name) {
+    registerQuery.set("familyName", preview.family.name);
+  }
+
+  const loginHref = `/login?${registerQuery.toString()}`;
+  const registerHref = `/registro?${registerQuery.toString()}`;
 
   return (
     <main className="app-shell">
@@ -31,8 +45,8 @@ export default async function InvitationPage({
             <Link href="/dashboard">Ir al dashboard</Link>
           ) : (
             <>
-              <Link href={`/login?next=/invitacion/${token}`}>Entrar</Link>
-              <Link className="primary-button" href={`/registro?next=/invitacion/${token}`}>
+              <Link href={loginHref}>Entrar</Link>
+              <Link className="primary-button" href={registerHref}>
                 Crear cuenta
               </Link>
             </>
@@ -96,13 +110,10 @@ export default async function InvitationPage({
                     Para aceptar la invitacion, primero entra o crea tu cuenta.
                   </p>
                   <div className="hero-actions">
-                    <Link className="primary-button" href={`/login?next=/invitacion/${token}`}>
+                    <Link className="primary-button" href={loginHref}>
                       Iniciar sesion
                     </Link>
-                    <Link
-                      className="secondary-button"
-                      href={`/registro?next=/invitacion/${token}`}
-                    >
+                    <Link className="secondary-button" href={registerHref}>
                       Crear cuenta
                     </Link>
                   </div>

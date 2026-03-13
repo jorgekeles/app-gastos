@@ -15,6 +15,8 @@ export function AuthPanel({ mode }: AuthPanelProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [nextPath, setNextPath] = useState("/dashboard");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteFamilyName, setInviteFamilyName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -27,12 +29,44 @@ export function AuthPanel({ mode }: AuthPanelProps) {
       : "Registrate para empezar a construir el espacio financiero privado de tu familia.";
 
   useEffect(() => {
-    const next = new URLSearchParams(window.location.search).get("next");
+    const query = new URLSearchParams(window.location.search);
+    const next = query.get("next");
+    const invitedEmail = query.get("inviteEmail");
+    const familyName = query.get("familyName");
 
     if (next) {
       setNextPath(next);
     }
+
+    if (invitedEmail) {
+      setInviteEmail(invitedEmail);
+      setEmail(invitedEmail);
+    }
+
+    if (familyName) {
+      setInviteFamilyName(familyName);
+    }
   }, []);
+
+  function buildAuthHref(pathname: "/login" | "/registro") {
+    const query = new URLSearchParams();
+
+    if (nextPath) {
+      query.set("next", nextPath);
+    }
+
+    if (inviteEmail) {
+      query.set("inviteEmail", inviteEmail);
+    }
+
+    if (inviteFamilyName) {
+      query.set("familyName", inviteFamilyName);
+    }
+
+    const suffix = query.toString();
+
+    return suffix ? `${pathname}?${suffix}` : pathname;
+  }
 
   async function postAuthRequest(path: string, payload: Record<string, string>) {
     const controller = new AbortController();
@@ -81,6 +115,7 @@ export function AuthPanel({ mode }: AuthPanelProps) {
         const data = await postAuthRequest("/auth/sign-in", {
           email,
           password,
+          nextPath,
         });
 
         startTransition(() => {
@@ -91,11 +126,15 @@ export function AuthPanel({ mode }: AuthPanelProps) {
         return;
       }
 
+      const emailRedirectUrl = new URL("/auth/callback", window.location.origin);
+      emailRedirectUrl.searchParams.set("next", nextPath);
+
       const data = await postAuthRequest("/auth/sign-up", {
         fullName,
         email,
         password,
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        nextPath,
+        emailRedirectTo: emailRedirectUrl.toString(),
       });
 
       if (data?.redirectTo) {
@@ -141,6 +180,12 @@ export function AuthPanel({ mode }: AuthPanelProps) {
         <div className="auth-benefit">ARS y USD con historial</div>
         <div className="auth-benefit">Cuotas y vencimientos visibles</div>
       </div>
+
+      {inviteFamilyName ? (
+        <div className="feedback success">
+          Esta cuenta se unira a la familia <strong>{inviteFamilyName}</strong>.
+        </div>
+      ) : null}
 
       <form className="auth-form" onSubmit={handleSubmit}>
         {mode === "register" ? (
@@ -201,12 +246,12 @@ export function AuthPanel({ mode }: AuthPanelProps) {
         {mode === "login" ? (
           <>
             <span>No tenes cuenta todavia?</span>
-            <Link href="/registro">Crear acceso</Link>
+            <Link href={buildAuthHref("/registro")}>Crear acceso</Link>
           </>
         ) : (
           <>
             <span>Ya tenes acceso?</span>
-            <Link href="/login">Iniciar sesion</Link>
+            <Link href={buildAuthHref("/login")}>Iniciar sesion</Link>
           </>
         )}
       </div>

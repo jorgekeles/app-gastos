@@ -7,7 +7,20 @@ const signUpSchema = z.object({
   email: z.email(),
   password: z.string().min(8),
   emailRedirectTo: z.url(),
+  nextPath: z.string().trim().optional(),
 });
+
+function getSafeNextPath(value?: string) {
+  if (!value) {
+    return "/dashboard";
+  }
+
+  if (!value.startsWith("/") || value.startsWith("//")) {
+    return "/dashboard";
+  }
+
+  return value;
+}
 
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
@@ -21,7 +34,7 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createServerSupabaseClient();
-  const { email, password, fullName, emailRedirectTo } = parsed.data;
+  const { email, password, fullName, emailRedirectTo, nextPath } = parsed.data;
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
@@ -39,7 +52,7 @@ export async function POST(request: Request) {
 
   if (data.session) {
     return NextResponse.json({
-      redirectTo: "/dashboard",
+      redirectTo: getSafeNextPath(nextPath),
     });
   }
 

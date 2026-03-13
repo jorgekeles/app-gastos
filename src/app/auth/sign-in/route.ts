@@ -5,7 +5,20 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 const signInSchema = z.object({
   email: z.email(),
   password: z.string().min(8),
+  nextPath: z.string().trim().optional(),
 });
+
+function getSafeNextPath(value?: string) {
+  if (!value) {
+    return "/dashboard";
+  }
+
+  if (!value.startsWith("/") || value.startsWith("//")) {
+    return "/dashboard";
+  }
+
+  return value;
+}
 
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
@@ -19,7 +32,7 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createServerSupabaseClient();
-  const { email, password } = parsed.data;
+  const { email, password, nextPath } = parsed.data;
   const { error } = await supabase.auth.signInWithPassword({
     email,
     password,
@@ -30,6 +43,6 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({
-    redirectTo: "/dashboard",
+    redirectTo: getSafeNextPath(nextPath),
   });
 }

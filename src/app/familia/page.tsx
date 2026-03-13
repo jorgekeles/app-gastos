@@ -40,6 +40,7 @@ export default async function FamilyPage({ searchParams }: FamilyPageProps) {
   const created = params["created"] === "1";
   const accepted = params["accepted"] === "1";
   const deleted = params["deleted"] === "1";
+  const memberRemoved = params["memberRemoved"] === "1";
   const delivery = typeof params["delivery"] === "string" ? params["delivery"] : null;
   const notice = typeof params["notice"] === "string" ? params["notice"] : null;
   const error = typeof params["error"] === "string" ? params["error"] : null;
@@ -96,6 +97,11 @@ export default async function FamilyPage({ searchParams }: FamilyPageProps) {
       {deleted ? (
         <div className="feedback success">
           La invitacion se elimino correctamente y ese enlace ya no se puede usar.
+        </div>
+      ) : null}
+      {memberRemoved ? (
+        <div className="feedback success">
+          El miembro fue eliminado de la familia correctamente.
         </div>
       ) : null}
       {accepted ? (
@@ -256,12 +262,31 @@ export default async function FamilyPage({ searchParams }: FamilyPageProps) {
                   <strong>{member.fullName}</strong>
                   <span>{member.email}</span>
                 </div>
-                <div className="timeline-amount">
+                <div
+                  className={`timeline-amount ${
+                    data.role === "ADMIN" && member.id !== data.currentUserId
+                      ? "timeline-row-actions"
+                      : ""
+                  }`}
+                >
                   <span className="status-chip status-neutral">{member.role}</span>
                   {member.joinedAt ? (
                     <span className="row-note">
                       Desde {formatLongDate(member.joinedAt.slice(0, 10))}
                     </span>
+                  ) : null}
+                  {data.role === "ADMIN" && member.id !== data.currentUserId ? (
+                    <form action="/familia/members/remove" method="post">
+                      <input name="returnTo" type="hidden" value="/familia" />
+                      <input
+                        name="memberUserId"
+                        type="hidden"
+                        value={member.id}
+                      />
+                      <button className="secondary-button destructive-button" type="submit">
+                        Eliminar miembro
+                      </button>
+                    </form>
                   ) : null}
                 </div>
               </div>
