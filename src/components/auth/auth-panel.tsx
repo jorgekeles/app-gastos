@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { startTransition, useEffect, useState } from "react";
 import { BrandLogo } from "@/components/brand/brand-logo";
-import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 
 type AuthPanelProps = {
   mode: "login" | "register";
@@ -35,63 +34,83 @@ export function AuthPanel({ mode }: AuthPanelProps) {
     }
   }, []);
 
+  async function postAuthRequest(path: string, payload: Record<string, string>) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      const data = (await response.json().catch(() => null)) as
+        | { error?: string; message?: string; redirectTo?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(data?.error ?? "No pudimos completar la operacion.");
+      }
+
+      return data;
+    } catch (requestError) {
+      if (requestError instanceof Error && requestError.name === "AbortError") {
+        throw new Error(
+          "La conexion esta tardando demasiado. Revisa la configuracion de Supabase e intenta otra vez.",
+        );
+      }
+
+      throw requestError;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setMessage(null);
     setPending(true);
 
-    const supabase = createBrowserSupabaseClient();
-
     try {
       if (mode === "login") {
-        const { error: loginError } = await supabase.auth.signInWithPassword({
+        const data = await postAuthRequest("/auth/sign-in", {
           email,
           password,
         });
 
-        if (loginError) {
-          throw loginError;
-        }
-
         startTransition(() => {
-          router.replace(nextPath);
+          router.replace(data?.redirectTo ?? nextPath);
           router.refresh();
         });
 
         return;
       }
 
-      const emailRedirectTo =
-        typeof window === "undefined"
-          ? undefined
-          : `${window.location.origin}/auth/callback`;
-
-      const { data, error: registerError } = await supabase.auth.signUp({
+      const data = await postAuthRequest("/auth/sign-up", {
+        fullName,
         email,
         password,
-        options: {
-          emailRedirectTo,
-          data: {
-            full_name: fullName,
-          },
-        },
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
       });
 
-      if (registerError) {
-        throw registerError;
-      }
+      if (data?.redirectTo) {
+        const redirectTo = data.redirectTo;
 
-      if (data.session) {
         startTransition(() => {
-          router.replace("/dashboard");
+          router.replace(redirectTo);
           router.refresh();
         });
         return;
       }
 
       setMessage(
-        "Te enviamos un correo de confirmacion. Cuando actives tu cuenta vas a poder entrar al dashboard.",
+        data?.message ??
+          "Te enviamos un correo de confirmacion. Cuando actives tu cuenta vas a poder entrar al dashboard.",
       );
     } catch (submitError) {
       setError(
