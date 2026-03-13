@@ -17,6 +17,7 @@ export default async function IncomesPage({ searchParams }: IncomesPageProps) {
   const data = await getIncomesPageData(user);
   const params = (await searchParams) ?? {};
   const success = params["success"] === "1";
+  const updated = params["updated"] === "1";
   const deleted = params["deleted"] === "1";
   const error = typeof params["error"] === "string" ? params["error"] : null;
 
@@ -53,6 +54,11 @@ export default async function IncomesPage({ searchParams }: IncomesPageProps) {
       {success ? (
         <div className="feedback success">
           El ingreso se guardo correctamente.
+        </div>
+      ) : null}
+      {updated ? (
+        <div className="feedback success">
+          El ingreso se actualizo correctamente.
         </div>
       ) : null}
       {deleted ? (
@@ -173,6 +179,9 @@ export default async function IncomesPage({ searchParams }: IncomesPageProps) {
                   <span className="timeline-tag timeline-tag-income">
                     Base {formatMoney(income.amountBaseSnapshot, data.family.baseCurrency)}
                   </span>
+                  <a className="inline-button" href={`/ingresos/${income.id}/editar`}>
+                    Editar
+                  </a>
                   <form action="/ingresos/delete" method="post">
                     <input name="incomeId" type="hidden" value={income.id} />
                     <input name="returnTo" type="hidden" value="/ingresos" />

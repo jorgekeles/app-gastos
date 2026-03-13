@@ -292,6 +292,9 @@ export default async function ExpensesPage({
                       Base {formatMoney(expense.amountBaseSnapshot, data.family.baseCurrency)}
                     </span>
                     <div className="inline-actions">
+                      <a className="inline-button" href={`/egresos/${expense.id}/editar`}>
+                        Editar
+                      </a>
                       {expense.paymentStatus !== "PAID" ? (
                         <form action="/egresos/status" method="post">
                           <input name="expenseId" type="hidden" value={expense.id} />

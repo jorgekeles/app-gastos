@@ -39,6 +39,7 @@ export async function updateSession(request: NextRequest) {
     "/ahorro",
     "/notas",
     "/calendario",
+    "/familia",
   ].some((route) => pathname === route || pathname.startsWith(`${route}/`));
 
   if (!user && isProtectedPage) {

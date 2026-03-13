@@ -232,6 +232,10 @@ export default async function DashboardPage() {
                 <strong>Calendario</strong>
                 <span>Ver el mes consolidado con ingresos y egresos.</span>
               </Link>
+              <Link className="quick-link-card" href="/familia">
+                <strong>Familia</strong>
+                <span>Invitar miembros y administrar accesos compartidos.</span>
+              </Link>
             </div>
           </article>
         </div>

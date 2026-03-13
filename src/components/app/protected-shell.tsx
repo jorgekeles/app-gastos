@@ -19,6 +19,7 @@ const navItems = [
   { href: "/ahorro", label: "Ahorro" },
   { href: "/notas", label: "Notas" },
   { href: "/calendario", label: "Calendario" },
+  { href: "/familia", label: "Familia" },
 ];
 
 function isActivePath(currentPath: string, href: string) {

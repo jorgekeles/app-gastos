@@ -843,6 +843,55 @@ button:disabled {
   line-height: 1.55;
 }
 
+.invite-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.invite-card:first-of-type {
+  padding-top: 0;
+}
+
+.invite-card:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.invite-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.invite-link-box {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: rgba(var(--primary-rgb), 0.05);
+}
+
+.invite-link-box span {
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.invite-link-box a {
+  color: var(--primary);
+  word-break: break-all;
+}
+
+.invite-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .timeline-row {
   display: flex;
   justify-content: space-between;
@@ -1084,6 +1133,14 @@ button:disabled {
 .note-feed-item p {
   margin: 0;
   line-height: 1.65;
+}
+
+.invite-landing {
+  width: min(720px, 100%);
+}
+
+.invite-login-cta p {
+  margin-top: 18px;
 }
 
 .calendar-nav {

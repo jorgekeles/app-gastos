@@ -5,6 +5,7 @@ import postgres from "postgres";
 import type { User as AuthUser } from "@supabase/supabase-js";
 
 export type CurrencyCode = "ARS" | "USD";
+export type FamilyRole = "ADMIN" | "MEMBER";
 export type ExpenseKind =
   | "ONE_TIME"
   | "RECURRING"
@@ -21,6 +22,7 @@ export type RecurrenceFrequency =
   | "BIMONTHLY"
   | "QUARTERLY";
 export type SavingsDirection = "DEPOSIT" | "WITHDRAWAL" | "ADJUSTMENT";
+export type InvitationMethod = "EMAIL" | "PHONE";
 
 type FamilyRow = {
   id: string;
@@ -29,11 +31,16 @@ type FamilyRow = {
   defaultDisplayCurrency: CurrencyCode;
 };
 
+type MembershipRow = FamilyRow & {
+  role: FamilyRole;
+};
+
 type AppContext = {
   family: FamilyRow;
   fullName: string;
   userId: string;
   email: string;
+  role: FamilyRole;
 };
 
 export type IncomeRow = {
@@ -90,6 +97,28 @@ export type NoteRow = {
   authorName: string;
 };
 
+export type FamilyMemberRow = {
+  id: string;
+  fullName: string;
+  email: string;
+  role: FamilyRole;
+  joinedAt: string | null;
+};
+
+export type InvitationRow = {
+  id: string;
+  token: string;
+  role: FamilyRole;
+  method: InvitationMethod;
+  email: string | null;
+  phone: string | null;
+  message: string | null;
+  expiresAt: string;
+  acceptedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+};
+
 export type CalendarDay = {
   date: string;
   dayNumber: number;
@@ -103,6 +132,7 @@ export type CalendarDay = {
 export type DashboardData = {
   family: FamilyRow;
   fullName: string;
+  role: FamilyRole;
   monthIncomeTotal: number;
   monthIncomeCount: number;
   monthExpenseTotal: number;
@@ -149,6 +179,23 @@ type ExpenseInput = {
   recurrenceCount?: number;
   totalInstallments?: number;
   currentInstallmentNumber?: number;
+};
+
+type InvitationInput = {
+  method: InvitationMethod;
+  role: FamilyRole;
+  email?: string;
+  phone?: string;
+  message?: string;
+};
+
+type InvitationPreview = {
+  invitation: InvitationRow;
+  family: FamilyRow;
+  invitedByName: string;
+  currentUserEmail: string | null;
+  canAccept: boolean;
+  reason: string | null;
 };
 
 type SavingsGoalInput = {
@@ -289,6 +336,24 @@ create table if not exists public.notes (
   deleted_at timestamptz
 );
 
+create table if not exists public.invitations (
+  id uuid primary key,
+  family_id uuid not null references public.families(id) on delete cascade,
+  invited_by_user_id uuid not null references public.users(id) on delete restrict,
+  role text not null default 'MEMBER' check (role in ('ADMIN', 'MEMBER')),
+  method text not null check (method in ('EMAIL', 'PHONE')),
+  email text,
+  phone text,
+  message text,
+  token text not null unique,
+  expires_at timestamptz not null,
+  accepted_at timestamptz,
+  accepted_by_user_id uuid references public.users(id) on delete set null,
+  revoked_at timestamptz,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
+);
+
 create index if not exists family_members_user_id_idx on public.family_members (user_id);
 create index if not exists incomes_family_id_date_idx on public.incomes (family_id, transaction_date desc);
 create index if not exists incomes_family_id_created_by_idx on public.incomes (family_id, created_by_user_id);
@@ -297,6 +362,8 @@ create index if not exists expenses_family_id_status_idx on public.expenses (fam
 create index if not exists savings_goals_family_id_idx on public.savings_goals (family_id);
 create index if not exists savings_transactions_goal_id_idx on public.savings_transactions (goal_id, transaction_date desc);
 create index if not exists notes_family_id_created_at_idx on public.notes (family_id, created_at desc);
+create index if not exists invitations_family_id_created_at_idx on public.invitations (family_id, created_at desc);
+create index if not exists invitations_token_idx on public.invitations (token);
 `;
 
 type GlobalDbState = typeof globalThis & {
@@ -314,6 +381,16 @@ function getDatabaseUrl() {
   }
 
   return value;
+}
+
+function getAppUrl() {
+  const value = process.env["NEXT_PUBLIC_APP_URL"];
+
+  if (!value) {
+    return "http://localhost:3000";
+  }
+
+  return value.replace(/\/+$/, "");
 }
 
 const sql =
@@ -369,6 +446,26 @@ function slugify(value: string) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
+}
+
+function normalizeEmail(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function normalizePhone(value: string) {
+  const trimmed = value.trim();
+  const plusPrefix = trimmed.startsWith("+") ? "+" : "";
+  const digits = trimmed.replace(/[^\d]/g, "");
+
+  if (!digits) {
+    return "";
+  }
+
+  return `${plusPrefix}${digits}`;
+}
+
+function phoneDigits(value: string) {
+  return value.replace(/[^\d]/g, "");
 }
 
 function parseDateKey(date: string) {
@@ -484,30 +581,15 @@ function signedSavingsSqlAlias(alias: string) {
 async function ensureUserAndFamily(authUser: AuthUser): Promise<AppContext> {
   await ensureAppSchema();
 
-  const email = authUser.email;
+  const { email, fullName } = await ensureAppUser(authUser);
 
-  if (!email) {
-    throw new Error("El usuario autenticado no tiene email.");
-  }
-
-  const fullName = toDisplayName(authUser);
-
-  await sql`
-    insert into public.users (id, email, full_name)
-    values (${authUser.id}::uuid, ${email}, ${fullName})
-    on conflict (id) do update
-    set
-      email = excluded.email,
-      full_name = excluded.full_name,
-      updated_at = timezone('utc', now())
-  `;
-
-  const membership = await sql<FamilyRow[]>`
+  const membership = await sql<MembershipRow[]>`
     select
       f.id,
       f.name,
       f.base_currency as "baseCurrency",
-      f.default_display_currency as "defaultDisplayCurrency"
+      f.default_display_currency as "defaultDisplayCurrency",
+      fm.role as "role"
     from public.family_members fm
     join public.families f on f.id = fm.family_id
     where fm.user_id = ${authUser.id}::uuid
@@ -522,6 +604,7 @@ async function ensureUserAndFamily(authUser: AuthUser): Promise<AppContext> {
       fullName,
       userId: authUser.id,
       email,
+      role: membership[0].role,
     };
   }
 
@@ -581,6 +664,45 @@ async function ensureUserAndFamily(authUser: AuthUser): Promise<AppContext> {
     fullName,
     userId: authUser.id,
     email,
+    role: "ADMIN",
+  };
+}
+
+async function ensureAdminContext(authUser: AuthUser) {
+  const context = await ensureUserAndFamily(authUser);
+
+  if (context.role !== "ADMIN") {
+    throw new Error("Solo un administrador puede invitar integrantes.");
+  }
+
+  return context;
+}
+
+async function ensureAppUser(authUser: AuthUser) {
+  await ensureAppSchema();
+
+  const email = authUser.email;
+
+  if (!email) {
+    throw new Error("El usuario autenticado no tiene email.");
+  }
+
+  const normalizedEmail = normalizeEmail(email);
+  const fullName = toDisplayName(authUser);
+
+  await sql`
+    insert into public.users (id, email, full_name)
+    values (${authUser.id}::uuid, ${normalizedEmail}, ${fullName})
+    on conflict (id) do update
+    set
+      email = excluded.email,
+      full_name = excluded.full_name,
+      updated_at = timezone('utc', now())
+  `;
+
+  return {
+    email: normalizedEmail,
+    fullName,
   };
 }
 
@@ -889,6 +1011,76 @@ export async function deleteIncomeForUser(authUser: AuthUser, incomeId: string) 
   `;
 }
 
+export async function getIncomeByIdForUser(
+  authUser: AuthUser,
+  incomeId: string,
+) {
+  const context = await ensureUserAndFamily(authUser);
+  const income = await sql<IncomeRow[]>`
+    select
+      id,
+      title,
+      category,
+      amount_original::float8 as "amountOriginal",
+      amount_base_snapshot::float8 as "amountBaseSnapshot",
+      currency,
+      transaction_date::text as "transactionDate",
+      notes
+    from public.incomes
+    where id = ${incomeId}::uuid
+      and family_id = ${context.family.id}::uuid
+      and deleted_at is null
+    limit 1
+  `;
+
+  return {
+    family: context.family,
+    fullName: context.fullName,
+    income: income[0] ?? null,
+  };
+}
+
+export async function updateIncomeForUser(
+  authUser: AuthUser,
+  incomeId: string,
+  input: IncomeInput,
+) {
+  const context = await ensureUserAndFamily(authUser);
+  const normalizedTitle = input.title.trim();
+
+  if (!normalizedTitle) {
+    throw new Error("El ingreso necesita un nombre.");
+  }
+
+  const amountOriginal = normalizeNumber(input.amountOriginal, "El monto");
+  const fxRateUsed = input.fxRateUsed ? Number(input.fxRateUsed.toFixed(6)) : null;
+  const amountBaseSnapshot = toBaseAmount(
+    amountOriginal,
+    input.currency,
+    context.family.baseCurrency,
+    fxRateUsed,
+  );
+
+  await sql`
+    update public.incomes
+    set
+      title = ${normalizedTitle},
+      category = ${input.category?.trim() || null},
+      amount_original = ${amountOriginal},
+      currency = ${input.currency},
+      transaction_date = ${input.transactionDate},
+      notes = ${input.notes?.trim() || null},
+      fx_provider = ${fxRateUsed ? "manual" : null},
+      fx_rate_used = ${fxRateUsed},
+      amount_base_snapshot = ${amountBaseSnapshot},
+      base_currency = ${context.family.baseCurrency},
+      updated_at = timezone('utc', now())
+    where id = ${incomeId}::uuid
+      and family_id = ${context.family.id}::uuid
+      and deleted_at is null
+  `;
+}
+
 export async function createExpenseForUser(authUser: AuthUser, input: ExpenseInput) {
   const context = await ensureUserAndFamily(authUser);
   const normalizedTitle = input.title.trim();
@@ -992,6 +1184,97 @@ export async function deleteExpenseForUser(authUser: AuthUser, expenseId: string
     update public.expenses
     set
       deleted_at = timezone('utc', now()),
+      updated_at = timezone('utc', now())
+    where id = ${expenseId}::uuid
+      and family_id = ${context.family.id}::uuid
+      and deleted_at is null
+  `;
+}
+
+export async function getExpenseByIdForUser(
+  authUser: AuthUser,
+  expenseId: string,
+) {
+  const context = await ensureUserAndFamily(authUser);
+  const expense = await sql<ExpenseRow[]>`
+    select
+      id,
+      title,
+      category,
+      amount_original::float8 as "amountOriginal",
+      amount_base_snapshot::float8 as "amountBaseSnapshot",
+      currency,
+      due_date::text as "dueDate",
+      payment_status as "paymentStatus",
+      expense_kind as "expenseKind",
+      entry_mode as "entryMode",
+      installment_number as "installmentNumber",
+      total_installments as "totalInstallments",
+      notes
+    from public.expenses
+    where id = ${expenseId}::uuid
+      and family_id = ${context.family.id}::uuid
+      and deleted_at is null
+    limit 1
+  `;
+
+  return {
+    family: context.family,
+    fullName: context.fullName,
+    expense: expense[0] ?? null,
+  };
+}
+
+export async function updateExpenseForUser(
+  authUser: AuthUser,
+  expenseId: string,
+  input: ExpenseInput,
+) {
+  const context = await ensureUserAndFamily(authUser);
+  const normalizedTitle = input.title.trim();
+
+  if (!normalizedTitle) {
+    throw new Error("El egreso necesita un nombre.");
+  }
+
+  const amountOriginal = normalizeNumber(input.amountOriginal, "El monto");
+  const fxRateUsed = input.fxRateUsed ? Number(input.fxRateUsed.toFixed(6)) : null;
+  const amountBaseSnapshot = toBaseAmount(
+    amountOriginal,
+    input.currency,
+    context.family.baseCurrency,
+    fxRateUsed,
+  );
+
+  const currentExpense = await sql<{ seriesId: string | null }[]>`
+    select series_id as "seriesId"
+    from public.expenses
+    where id = ${expenseId}::uuid
+      and family_id = ${context.family.id}::uuid
+      and deleted_at is null
+    limit 1
+  `;
+
+  if (!currentExpense[0]) {
+    throw new Error("No encontramos el egreso a editar.");
+  }
+
+  await sql`
+    update public.expenses
+    set
+      title = ${normalizedTitle},
+      category = ${input.category?.trim() || null},
+      expense_kind = ${input.expenseKind},
+      payment_status = ${input.paymentStatus},
+      amount_original = ${amountOriginal},
+      currency = ${input.currency},
+      due_date = ${input.dueDate},
+      notes = ${input.notes?.trim() || null},
+      fx_provider = ${fxRateUsed ? "manual" : null},
+      fx_rate_used = ${fxRateUsed},
+      amount_base_snapshot = ${amountBaseSnapshot},
+      base_currency = ${context.family.baseCurrency},
+      paid_at = ${input.paymentStatus === "PAID" ? new Date().toISOString() : null},
       updated_at = timezone('utc', now())
     where id = ${expenseId}::uuid
       and family_id = ${context.family.id}::uuid
@@ -1115,6 +1398,374 @@ export async function createNoteForUser(authUser: AuthUser, content: string) {
   `;
 }
 
+export function buildInvitationShareLinks(
+  invitation: InvitationRow,
+  familyName: string,
+) {
+  const acceptUrl = `${getAppUrl()}/invitacion/${invitation.token}`;
+  const message = invitation.message?.trim()
+    ? `${invitation.message.trim()}\n\n`
+    : "";
+  const body =
+    `${message}Te invito a sumarte a la cuenta familiar "${familyName}" en AppGastos.\n` +
+    `Acepta la invitacion desde este enlace: ${acceptUrl}`;
+  const encodedBody = encodeURIComponent(body);
+  const emailSubject = encodeURIComponent(
+    `Invitacion a la familia ${familyName} en AppGastos`,
+  );
+  const normalizedPhone = invitation.phone ? phoneDigits(invitation.phone) : "";
+
+  return {
+    acceptUrl,
+    mailtoHref: invitation.email
+      ? `mailto:${invitation.email}?subject=${emailSubject}&body=${encodedBody}`
+      : null,
+    whatsappHref: normalizedPhone
+      ? `https://wa.me/${normalizedPhone}?text=${encodedBody}`
+      : null,
+    smsHref: normalizedPhone ? `sms:${normalizedPhone}?body=${encodedBody}` : null,
+  };
+}
+
+export async function createInvitationForUser(
+  authUser: AuthUser,
+  input: InvitationInput,
+) {
+  const context = await ensureAdminContext(authUser);
+  const role = input.role === "ADMIN" ? "ADMIN" : "MEMBER";
+  const method = input.method;
+  const email = input.email ? normalizeEmail(input.email) : null;
+  const phone = input.phone ? normalizePhone(input.phone) : null;
+  const message = input.message?.trim() || null;
+
+  if (method === "EMAIL") {
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error("Necesitamos un email valido para enviar la invitacion.");
+    }
+
+    const existingMember = await sql<{ id: string }[]>`
+      select u.id
+      from public.family_members fm
+      join public.users u on u.id = fm.user_id
+      where fm.family_id = ${context.family.id}::uuid
+        and fm.status = 'ACTIVE'
+        and u.email = ${email}
+      limit 1
+    `;
+
+    if (existingMember[0]) {
+      throw new Error("Ese email ya pertenece a un integrante activo.");
+    }
+  }
+
+  if (method === "PHONE" && (!phone || phoneDigits(phone).length < 8)) {
+    throw new Error("Necesitamos un telefono valido para compartir la invitacion.");
+  }
+
+  const token = crypto.randomBytes(24).toString("base64url");
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + 7);
+
+  const invitation = await sql<InvitationRow[]>`
+    insert into public.invitations (
+      id,
+      family_id,
+      invited_by_user_id,
+      role,
+      method,
+      email,
+      phone,
+      message,
+      token,
+      expires_at
+    )
+    values (
+      ${crypto.randomUUID()}::uuid,
+      ${context.family.id}::uuid,
+      ${context.userId}::uuid,
+      ${role},
+      ${method},
+      ${email},
+      ${phone},
+      ${message},
+      ${token},
+      ${expiresAt.toISOString()}
+    )
+    returning
+      id,
+      token,
+      role,
+      method,
+      email,
+      phone,
+      message,
+      expires_at::text as "expiresAt",
+      accepted_at::text as "acceptedAt",
+      revoked_at::text as "revokedAt",
+      created_at::text as "createdAt"
+  `;
+
+  return invitation[0];
+}
+
+export async function getFamilyPageData(authUser: AuthUser) {
+  const context = await ensureUserAndFamily(authUser);
+
+  const [members, invitations, activeInvitations] = await Promise.all([
+    sql<FamilyMemberRow[]>`
+      select
+        u.id,
+        u.full_name as "fullName",
+        u.email,
+        fm.role,
+        fm.joined_at::text as "joinedAt"
+      from public.family_members fm
+      join public.users u on u.id = fm.user_id
+      where fm.family_id = ${context.family.id}::uuid
+        and fm.status = 'ACTIVE'
+      order by fm.joined_at asc nulls last, u.full_name asc
+    `,
+    sql<InvitationRow[]>`
+      select
+        id,
+        token,
+        role,
+        method,
+        email,
+        phone,
+        message,
+        expires_at::text as "expiresAt",
+        accepted_at::text as "acceptedAt",
+        revoked_at::text as "revokedAt",
+        created_at::text as "createdAt"
+      from public.invitations
+      where family_id = ${context.family.id}::uuid
+      order by created_at desc
+      limit 40
+    `,
+    sql<{ count: number }[]>`
+      select count(*)::int as count
+      from public.invitations
+      where family_id = ${context.family.id}::uuid
+        and accepted_at is null
+        and revoked_at is null
+        and expires_at >= timezone('utc', now())
+    `,
+  ]);
+
+  return {
+    family: context.family,
+    fullName: context.fullName,
+    role: context.role,
+    members,
+    invitations,
+    activeInvitationsCount: activeInvitations[0]?.count ?? 0,
+  };
+}
+
+export async function getInvitationPreview(
+  token: string,
+  authUser: AuthUser | null,
+): Promise<InvitationPreview | null> {
+  await ensureAppSchema();
+
+  const invitation = await sql<
+    (InvitationRow & {
+      familyId: string;
+      familyName: string;
+      baseCurrency: CurrencyCode;
+      defaultDisplayCurrency: CurrencyCode;
+      invitedByName: string;
+    })[]
+  >`
+    select
+      i.id,
+      i.token,
+      i.role,
+      i.method,
+      i.email,
+      i.phone,
+      i.message,
+      i.expires_at::text as "expiresAt",
+      i.accepted_at::text as "acceptedAt",
+      i.revoked_at::text as "revokedAt",
+      i.created_at::text as "createdAt",
+      i.family_id as "familyId",
+      f.name as "familyName",
+      f.base_currency as "baseCurrency",
+      f.default_display_currency as "defaultDisplayCurrency",
+      u.full_name as "invitedByName"
+    from public.invitations i
+    join public.families f on f.id = i.family_id
+    join public.users u on u.id = i.invited_by_user_id
+    where i.token = ${token}
+    limit 1
+  `;
+
+  const row = invitation[0];
+
+  if (!row) {
+    return null;
+  }
+
+  let canAccept = true;
+  let reason: string | null = null;
+  let currentUserEmail: string | null = null;
+
+  if (row.revokedAt) {
+    canAccept = false;
+    reason = "La invitacion fue revocada por el administrador.";
+  } else if (row.acceptedAt) {
+    canAccept = false;
+    reason = "Esta invitacion ya fue utilizada.";
+  } else if (new Date(row.expiresAt).getTime() < Date.now()) {
+    canAccept = false;
+    reason = "La invitacion ya vencio.";
+  }
+
+  if (authUser) {
+    const ensuredUser = await ensureAppUser(authUser);
+    currentUserEmail = ensuredUser.email;
+
+    if (row.method === "EMAIL" && row.email && ensuredUser.email !== row.email) {
+      canAccept = false;
+      reason = `Esta invitacion fue enviada a ${row.email}. Inicia sesion con ese correo para aceptarla.`;
+    }
+
+    const memberships = await sql<{ familyId: string }[]>`
+      select family_id as "familyId"
+      from public.family_members
+      where user_id = ${authUser.id}::uuid
+        and status = 'ACTIVE'
+    `;
+
+    if (
+      memberships[0] &&
+      !memberships.some((membership) => membership.familyId === row.familyId)
+    ) {
+      canAccept = false;
+      reason =
+        "Tu usuario ya pertenece a otra familia. Por ahora cada cuenta usa una sola familia activa.";
+    }
+  }
+
+  return {
+    invitation: row,
+    family: {
+      id: row.familyId,
+      name: row.familyName,
+      baseCurrency: row.baseCurrency,
+      defaultDisplayCurrency: row.defaultDisplayCurrency,
+    },
+    invitedByName: row.invitedByName,
+    currentUserEmail,
+    canAccept,
+    reason,
+  };
+}
+
+export async function acceptInvitationForUser(authUser: AuthUser, token: string) {
+  await ensureAppSchema();
+  const { email } = await ensureAppUser(authUser);
+
+  const invitation = await sql<
+    (InvitationRow & { familyId: string })[]
+  >`
+    select
+      id,
+      token,
+      role,
+      method,
+      email,
+      phone,
+      message,
+      expires_at::text as "expiresAt",
+      accepted_at::text as "acceptedAt",
+      revoked_at::text as "revokedAt",
+      created_at::text as "createdAt",
+      family_id as "familyId"
+    from public.invitations
+    where token = ${token}
+    limit 1
+  `;
+
+  const row = invitation[0];
+
+  if (!row) {
+    throw new Error("La invitacion no existe.");
+  }
+
+  if (row.revokedAt) {
+    throw new Error("La invitacion fue revocada.");
+  }
+
+  if (row.acceptedAt) {
+    throw new Error("La invitacion ya fue aceptada.");
+  }
+
+  if (new Date(row.expiresAt).getTime() < Date.now()) {
+    throw new Error("La invitacion ya vencio.");
+  }
+
+  if (row.method === "EMAIL" && row.email && normalizeEmail(row.email) !== email) {
+    throw new Error(
+      `Esta invitacion fue enviada a ${row.email}. Inicia sesion con ese correo para aceptarla.`,
+    );
+  }
+
+  const memberships = await sql<{ familyId: string }[]>`
+    select family_id as "familyId"
+    from public.family_members
+    where user_id = ${authUser.id}::uuid
+      and status = 'ACTIVE'
+  `;
+
+  if (
+    memberships[0] &&
+    !memberships.some((membership) => membership.familyId === row.familyId)
+  ) {
+    throw new Error(
+      "Tu usuario ya pertenece a otra familia. Por ahora cada cuenta usa una sola familia activa.",
+    );
+  }
+
+  await sql`
+    insert into public.family_members (
+      id,
+      family_id,
+      user_id,
+      role,
+      status,
+      display_currency_preference,
+      joined_at
+    )
+    values (
+      ${crypto.randomUUID()}::uuid,
+      ${row.familyId}::uuid,
+      ${authUser.id}::uuid,
+      ${row.role},
+      'ACTIVE',
+      'ARS',
+      timezone('utc', now())
+    )
+    on conflict (family_id, user_id) do update
+    set
+      role = excluded.role,
+      status = 'ACTIVE',
+      joined_at = coalesce(public.family_members.joined_at, excluded.joined_at),
+      updated_at = timezone('utc', now())
+  `;
+
+  await sql`
+    update public.invitations
+    set
+      accepted_at = timezone('utc', now()),
+      accepted_by_user_id = ${authUser.id}::uuid,
+      updated_at = timezone('utc', now())
+    where id = ${row.id}::uuid
+  `;
+}
+
 export async function getDashboardData(authUser: AuthUser): Promise<DashboardData> {
   const context = await ensureUserAndFamily(authUser);
   const month = currentMonthRange();
@@ -1198,6 +1849,7 @@ export async function getDashboardData(authUser: AuthUser): Promise<DashboardDat
   return {
     family: context.family,
     fullName: context.fullName,
+    role: context.role,
     monthIncomeTotal: monthIncomeSummary[0]?.total ?? 0,
     monthIncomeCount: monthIncomeSummary[0]?.count ?? 0,
     monthExpenseTotal: monthExpenseSummary[0]?.total ?? 0,
