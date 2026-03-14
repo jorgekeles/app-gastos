@@ -7,6 +7,10 @@ import {
 } from "@/lib/app-db";
 import { requireAdminConsoleUser } from "@/lib/server-auth";
 
+type AdminPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
 function formatUsageDate(value: string | null) {
   if (!value) {
     return "Sin actividad registrada";
@@ -18,9 +22,14 @@ function formatUsageDate(value: string | null) {
   }).format(new Date(value));
 }
 
-export default async function AdminPage() {
+export default async function AdminPage({ searchParams }: AdminPageProps) {
   const user = await requireAdminConsoleUser();
   const data = await getAdminConsoleData(user);
+  const params = (await searchParams) ?? {};
+  const deleted = params["deleted"] === "1";
+  const deletedFamily =
+    typeof params["deletedFamily"] === "string" ? params["deletedFamily"] : null;
+  const error = typeof params["error"] === "string" ? params["error"] : null;
 
   return (
     <ProtectedShell
@@ -58,6 +67,13 @@ export default async function AdminPage() {
         </section>
       }
     >
+      {deleted && deletedFamily ? (
+        <div className="feedback success">
+          La cuenta familiar <strong>{deletedFamily}</strong> se elimino correctamente.
+        </div>
+      ) : null}
+      {error ? <div className="feedback error">{error}</div> : null}
+
       <section className="dashboard-columns">
         <article className="timeline-card">
           <div className="panel-head">
@@ -87,6 +103,13 @@ export default async function AdminPage() {
                     <span className="status-chip status-accent">
                       Sin vencimiento
                     </span>
+                    <form action="/admin/families/delete" method="post">
+                      <input name="returnTo" type="hidden" value="/admin" />
+                      <input name="familyId" type="hidden" value={family.id} />
+                      <button className="secondary-button destructive-button" type="submit">
+                        Eliminar cuenta
+                      </button>
+                    </form>
                   </div>
                 </div>
 

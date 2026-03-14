@@ -18,6 +18,10 @@ function getAdminConsoleEmails() {
   return configured.length > 0 ? configured : defaultAdminEmails;
 }
 
+export function isAdminConsoleEmail(email: string | null | undefined) {
+  return Boolean(email && getAdminConsoleEmails().includes(normalizeEmail(email)));
+}
+
 export async function requireAuthUser() {
   const supabase = await createServerSupabaseClient();
   const {
@@ -33,9 +37,8 @@ export async function requireAuthUser() {
 
 export async function requireAdminConsoleUser() {
   const user = await requireAuthUser();
-  const email = user.email ? normalizeEmail(user.email) : "";
 
-  if (!email || !getAdminConsoleEmails().includes(email)) {
+  if (!isAdminConsoleEmail(user.email)) {
     notFound();
   }
 

@@ -2793,6 +2793,40 @@ export async function getAdminConsoleData(
   };
 }
 
+export async function deleteFamilyFromAdminConsole(
+  authUser: AuthUser,
+  familyId: string,
+) {
+  await ensureAppSchema();
+  await ensureAppUser(authUser);
+
+  const normalizedFamilyId = familyId.trim();
+
+  if (!normalizedFamilyId) {
+    throw new Error("Necesitamos identificar la cuenta familiar a eliminar.");
+  }
+
+  const families = await sql<{ id: string; name: string }[]>`
+    select id, name
+    from public.families
+    where id = ${normalizedFamilyId}::uuid
+    limit 1
+  `;
+
+  const family = families[0];
+
+  if (!family) {
+    throw new Error("La cuenta familiar ya no existe.");
+  }
+
+  await sql`
+    delete from public.families
+    where id = ${normalizedFamilyId}::uuid
+  `;
+
+  return family;
+}
+
 export function formatMoney(amount: number, currency: CurrencyCode) {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
