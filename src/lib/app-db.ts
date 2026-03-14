@@ -75,7 +75,11 @@ export type SavingsGoalRow = {
   name: string;
   targetAmount: number | null;
   targetCurrency: CurrencyCode;
+  targetAmountBaseSnapshot: number | null;
   totalSavedBase: number;
+  completedAt: string | null;
+  isCompleted: boolean;
+  progressPercent: number;
 };
 
 export type SavingsTransactionRow = {
@@ -346,11 +350,19 @@ create table if not exists public.savings_goals (
   created_by_user_id uuid not null references public.users(id) on delete restrict,
   name text not null,
   target_amount numeric(18, 2),
+  target_amount_base_snapshot numeric(18, 2),
   target_currency text not null default 'ARS' check (target_currency in ('ARS', 'USD')),
   active boolean not null default true,
+  completed_at timestamptz,
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.savings_goals
+  add column if not exists target_amount_base_snapshot numeric(18, 2);
+
+alter table public.savings_goals
+  add column if not exists completed_at timestamptz;
 
 create table if not exists public.savings_transactions (
   id uuid primary key,
@@ -1400,6 +1412,19 @@ export async function createSavingsGoalForUser(
     throw new Error("El objetivo necesita un nombre.");
   }
 
+  const targetAmount =
+    typeof input.targetAmount === "number"
+      ? normalizeNumber(input.targetAmount, "El monto objetivo")
+      : null;
+  const targetFxSnapshot =
+    targetAmount !== null
+      ? await resolveFxSnapshot(
+          targetAmount,
+          input.targetCurrency,
+          context.family.baseCurrency,
+        )
+      : null;
+
   await sql`
     insert into public.savings_goals (
       id,
@@ -1407,6 +1432,7 @@ export async function createSavingsGoalForUser(
       created_by_user_id,
       name,
       target_amount,
+      target_amount_base_snapshot,
       target_currency
     )
     values (
@@ -1414,9 +1440,62 @@ export async function createSavingsGoalForUser(
       ${context.family.id}::uuid,
       ${context.userId}::uuid,
       ${name},
-      ${input.targetAmount ? Number(input.targetAmount.toFixed(2)) : null},
+      ${targetAmount},
+      ${targetFxSnapshot?.amountBaseSnapshot ?? null},
       ${input.targetCurrency}
     )
+  `;
+}
+
+async function refreshSavingsGoalCompletion(goalId: string, familyId: string) {
+  const goals = await sql<
+    {
+      id: string;
+      active: boolean;
+      completedAt: string | null;
+      targetAmountBaseSnapshot: number | null;
+    }[]
+  >`
+    select
+      id,
+      active,
+      completed_at::text as "completedAt",
+      target_amount_base_snapshot::float8 as "targetAmountBaseSnapshot"
+    from public.savings_goals
+    where id = ${goalId}::uuid
+      and family_id = ${familyId}::uuid
+    limit 1
+  `;
+
+  const goal = goals[0];
+
+  if (!goal) {
+    return;
+  }
+
+  const totals = await sql<NumericSummaryRow[]>`
+    select ${sql.unsafe(signedSavingsSqlAlias("st"))} as total
+    from public.savings_transactions st
+    where st.family_id = ${familyId}::uuid
+      and st.goal_id = ${goalId}::uuid
+  `;
+
+  const totalSavedBase = totals[0]?.total ?? 0;
+  const shouldBeCompleted =
+    goal.active &&
+    goal.targetAmountBaseSnapshot !== null &&
+    totalSavedBase >= goal.targetAmountBaseSnapshot;
+  const completedAt = shouldBeCompleted
+    ? goal.completedAt ?? new Date().toISOString()
+    : null;
+
+  await sql`
+    update public.savings_goals
+    set
+      completed_at = ${completedAt},
+      updated_at = timezone('utc', now())
+    where id = ${goalId}::uuid
+      and family_id = ${familyId}::uuid
   `;
 }
 
@@ -1477,6 +1556,156 @@ export async function createSavingsTransactionForUser(
       ${fxSnapshot.amountBaseSnapshot},
       ${context.family.baseCurrency}
     )
+  `;
+
+  await refreshSavingsGoalCompletion(input.goalId, context.family.id);
+}
+
+export async function getSavingsGoalByIdForUser(
+  authUser: AuthUser,
+  goalId: string,
+) {
+  const context = await ensureUserAndFamily(authUser);
+  const goals = await sql<
+    {
+      id: string;
+      name: string;
+      targetAmount: number | null;
+      targetCurrency: CurrencyCode;
+      targetAmountBaseSnapshot: number | null;
+      totalSavedBase: number;
+      completedAt: string | null;
+      active: boolean;
+    }[]
+  >`
+    select
+      g.id,
+      g.name,
+      g.target_amount::float8 as "targetAmount",
+      g.target_currency as "targetCurrency",
+      g.target_amount_base_snapshot::float8 as "targetAmountBaseSnapshot",
+      g.completed_at::text as "completedAt",
+      g.active,
+      coalesce(sum(
+        case st.direction
+          when 'DEPOSIT' then st.amount_base_snapshot
+          when 'WITHDRAWAL' then -st.amount_base_snapshot
+          else st.amount_base_snapshot
+        end
+      ), 0)::float8 as "totalSavedBase"
+    from public.savings_goals g
+    left join public.savings_transactions st on st.goal_id = g.id
+    where g.id = ${goalId}::uuid
+      and g.family_id = ${context.family.id}::uuid
+    group by g.id
+    limit 1
+  `;
+
+  const goal = goals[0];
+
+  return {
+    family: context.family,
+    fullName: context.fullName,
+    goal:
+      goal && goal.active
+        ? {
+            ...goal,
+            isCompleted:
+              goal.completedAt !== null ||
+              (goal.targetAmountBaseSnapshot !== null &&
+                goal.totalSavedBase >= goal.targetAmountBaseSnapshot),
+            progressPercent:
+              goal.targetAmountBaseSnapshot && goal.targetAmountBaseSnapshot > 0
+                ? Math.min(
+                    (goal.totalSavedBase / goal.targetAmountBaseSnapshot) * 100,
+                    100,
+                  )
+                : 0,
+          }
+        : null,
+  };
+}
+
+export async function updateSavingsGoalForUser(
+  authUser: AuthUser,
+  goalId: string,
+  input: SavingsGoalInput,
+) {
+  const context = await ensureUserAndFamily(authUser);
+  const name = input.name.trim();
+
+  if (!name) {
+    throw new Error("El objetivo necesita un nombre.");
+  }
+
+  const targetAmount =
+    typeof input.targetAmount === "number"
+      ? normalizeNumber(input.targetAmount, "El monto objetivo")
+      : null;
+  const targetFxSnapshot =
+    targetAmount !== null
+      ? await resolveFxSnapshot(
+          targetAmount,
+          input.targetCurrency,
+          context.family.baseCurrency,
+        )
+      : null;
+  const goals = await sql<{ id: string }[]>`
+    select id
+    from public.savings_goals
+    where id = ${goalId}::uuid
+      and family_id = ${context.family.id}::uuid
+      and active = true
+    limit 1
+  `;
+
+  if (!goals[0]) {
+    throw new Error("No encontramos el objetivo a editar.");
+  }
+
+  await sql`
+    update public.savings_goals
+    set
+      name = ${name},
+      target_amount = ${targetAmount},
+      target_amount_base_snapshot = ${targetFxSnapshot?.amountBaseSnapshot ?? null},
+      target_currency = ${input.targetCurrency},
+      updated_at = timezone('utc', now())
+    where id = ${goalId}::uuid
+      and family_id = ${context.family.id}::uuid
+      and active = true
+  `;
+
+  await refreshSavingsGoalCompletion(goalId, context.family.id);
+}
+
+export async function deleteSavingsGoalForUser(
+  authUser: AuthUser,
+  goalId: string,
+) {
+  const context = await ensureUserAndFamily(authUser);
+  const goals = await sql<{ id: string }[]>`
+    select id
+    from public.savings_goals
+    where id = ${goalId}::uuid
+      and family_id = ${context.family.id}::uuid
+      and active = true
+    limit 1
+  `;
+
+  if (!goals[0]) {
+    throw new Error("No encontramos el objetivo a borrar.");
+  }
+
+  await sql`
+    update public.savings_goals
+    set
+      active = false,
+      completed_at = null,
+      updated_at = timezone('utc', now())
+    where id = ${goalId}::uuid
+      and family_id = ${context.family.id}::uuid
+      and active = true
   `;
 }
 
@@ -2065,14 +2294,18 @@ export async function getDashboardData(authUser: AuthUser): Promise<DashboardDat
     sql<NumericSummaryRow[]>`
       select ${sql.unsafe(signedSavingsSqlAlias("st"))} as total
       from public.savings_transactions st
+      join public.savings_goals sg on sg.id = st.goal_id
       where st.family_id = ${context.family.id}::uuid
+        and sg.active = true
         and st.transaction_date >= ${month.start}
         and st.transaction_date < ${month.end}
     `,
     sql<NumericSummaryRow[]>`
       select ${sql.unsafe(signedSavingsSqlAlias("st"))} as total
       from public.savings_transactions st
+      join public.savings_goals sg on sg.id = st.goal_id
       where st.family_id = ${context.family.id}::uuid
+        and sg.active = true
     `,
     sql<NumericSummaryRow[]>`
       select coalesce(sum(amount_base_snapshot), 0)::float8 as total
@@ -2234,12 +2467,24 @@ export async function getSavingsPageData(authUser: AuthUser) {
   const context = await ensureUserAndFamily(authUser);
 
   const [goals, transactions, reserved] = await Promise.all([
-    sql<SavingsGoalRow[]>`
+    sql<
+      {
+        id: string;
+        name: string;
+        targetAmount: number | null;
+        targetCurrency: CurrencyCode;
+        targetAmountBaseSnapshot: number | null;
+        totalSavedBase: number;
+        completedAt: string | null;
+      }[]
+    >`
       select
         g.id,
         g.name,
         g.target_amount::float8 as "targetAmount",
+        g.target_amount_base_snapshot::float8 as "targetAmountBaseSnapshot",
         g.target_currency as "targetCurrency",
+        g.completed_at::text as "completedAt",
         coalesce(sum(
           case st.direction
             when 'DEPOSIT' then st.amount_base_snapshot
@@ -2268,20 +2513,40 @@ export async function getSavingsPageData(authUser: AuthUser) {
       from public.savings_transactions st
       join public.savings_goals g on g.id = st.goal_id
       where st.family_id = ${context.family.id}::uuid
+        and g.active = true
       order by st.transaction_date desc, st.created_at desc
       limit 40
     `,
     sql<NumericSummaryRow[]>`
       select ${sql.unsafe(signedSavingsSqlAlias("st"))} as total
       from public.savings_transactions st
+      join public.savings_goals g on g.id = st.goal_id
       where st.family_id = ${context.family.id}::uuid
+        and g.active = true
     `,
   ]);
+
+  const normalizedGoals: SavingsGoalRow[] = goals.map((goal) => {
+    const isCompleted =
+      goal.completedAt !== null ||
+      (goal.targetAmountBaseSnapshot !== null &&
+        goal.totalSavedBase >= goal.targetAmountBaseSnapshot);
+    const progressPercent =
+      goal.targetAmountBaseSnapshot && goal.targetAmountBaseSnapshot > 0
+        ? Math.min((goal.totalSavedBase / goal.targetAmountBaseSnapshot) * 100, 100)
+        : 0;
+
+    return {
+      ...goal,
+      isCompleted,
+      progressPercent,
+    };
+  });
 
   return {
     family: context.family,
     fullName: context.fullName,
-    goals,
+    goals: normalizedGoals,
     transactions,
     savingsReservedTotal: reserved[0]?.total ?? 0,
   };

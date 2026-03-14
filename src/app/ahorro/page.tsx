@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ProtectedShell } from "@/components/app/protected-shell";
 import { SummaryCard } from "@/components/dashboard/summary-card";
 import {
@@ -28,6 +29,8 @@ export default async function SavingsPage({ searchParams }: SavingsPageProps) {
   const blueRate = await getCurrentBlueRate().catch(() => null);
   const params = (await searchParams) ?? {};
   const goalCreated = params["goalCreated"] === "1";
+  const goalUpdated = params["goalUpdated"] === "1";
+  const goalDeleted = params["goalDeleted"] === "1";
   const movementCreated = params["movementCreated"] === "1";
   const error = typeof params["error"] === "string" ? params["error"] : null;
   const simAmount = parsePositiveNumber(params["simAmount"]);
@@ -70,6 +73,12 @@ export default async function SavingsPage({ searchParams }: SavingsPageProps) {
     >
       {goalCreated ? (
         <div className="feedback success">El objetivo se creo correctamente.</div>
+      ) : null}
+      {goalUpdated ? (
+        <div className="feedback success">El objetivo se actualizo correctamente.</div>
+      ) : null}
+      {goalDeleted ? (
+        <div className="feedback success">El objetivo se elimino correctamente.</div>
       ) : null}
       {movementCreated ? (
         <div className="feedback success">
@@ -222,7 +231,18 @@ export default async function SavingsPage({ searchParams }: SavingsPageProps) {
               <div className="goal-grid">
                 {data.goals.map((goal) => (
                   <article className="goal-card" key={goal.id}>
-                    <strong>{goal.name}</strong>
+                    <div className="goal-card-head">
+                      <strong>{goal.name}</strong>
+                      {goal.isCompleted ? (
+                        <span className="status-chip status-accent">Completado</span>
+                      ) : (
+                        <span className="status-chip status-primary">
+                          {goal.targetAmountBaseSnapshot
+                            ? `${goal.progressPercent.toFixed(0)}%`
+                            : "Sin meta"}
+                        </span>
+                      )}
+                    </div>
                     <span>
                       Guardado:{" "}
                       {formatMoney(goal.totalSavedBase, data.family.baseCurrency)}
@@ -233,6 +253,35 @@ export default async function SavingsPage({ searchParams }: SavingsPageProps) {
                         ? formatMoney(goal.targetAmount, goal.targetCurrency)
                         : "Sin monto definido"}
                     </span>
+                    {goal.targetAmountBaseSnapshot ? (
+                      <span>
+                        Meta base:{" "}
+                        {formatMoney(
+                          goal.targetAmountBaseSnapshot,
+                          data.family.baseCurrency,
+                        )}
+                      </span>
+                    ) : null}
+                    {goal.completedAt ? (
+                      <span>
+                        Completado el {formatShortDate(goal.completedAt.slice(0, 10))}
+                      </span>
+                    ) : null}
+                    <div className="goal-card-actions">
+                      <Link
+                        className="secondary-button"
+                        href={`/ahorro/goals/${goal.id}/editar`}
+                      >
+                        Editar
+                      </Link>
+                      <form action="/ahorro/goals/delete" method="post">
+                        <input name="goalId" type="hidden" value={goal.id} />
+                        <input name="returnTo" type="hidden" value="/ahorro" />
+                        <button className="secondary-button destructive-button" type="submit">
+                          Borrar
+                        </button>
+                      </form>
+                    </div>
                   </article>
                 ))}
               </div>
