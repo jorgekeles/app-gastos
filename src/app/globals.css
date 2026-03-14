@@ -58,11 +58,13 @@
 
 html {
   min-height: 100%;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
+  overflow-x: hidden;
   color: var(--text-primary);
   font-family: var(--font-body), sans-serif;
   background:
@@ -116,7 +118,7 @@ button:disabled {
 
 .app-shell {
   position: relative;
-  width: min(1160px, calc(100% - 32px));
+  width: min(1160px, calc(100% - 24px));
   margin: 0 auto;
 }
 
@@ -124,6 +126,7 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 26px 0;
 }
@@ -132,6 +135,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 14px;
+  min-width: 0;
 }
 
 .brand-link {
@@ -142,6 +146,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .brand-logo-image {
@@ -161,6 +166,7 @@ button:disabled {
   padding-left: 4px;
   color: var(--text-secondary);
   font-size: 0.92rem;
+  max-width: 48ch;
 }
 
 .brand-badge {
@@ -193,6 +199,8 @@ button:disabled {
 .header-links {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 12px;
 }
 
@@ -204,6 +212,7 @@ button:disabled {
   justify-content: center;
   align-items: center;
   gap: 8px;
+  min-height: 46px;
   border-radius: 999px;
   padding: 12px 18px;
   transition:
@@ -550,6 +559,14 @@ button:disabled {
   margin-bottom: 22px;
 }
 
+.dashboard-head > div,
+.panel-head > div,
+.timeline-row > div,
+.legend-item > div,
+.admin-family-grid > div {
+  min-width: 0;
+}
+
 .dashboard-head h1 {
   font-size: clamp(2.25rem, 4vw, 3.3rem);
 }
@@ -611,6 +628,7 @@ button:disabled {
   font-size: 1.82rem;
   line-height: 1;
   font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .summary-split-value {
@@ -806,11 +824,13 @@ button:disabled {
 
 .legend-value {
   text-align: right;
+  min-width: 0;
 }
 
 .legend-value strong {
   display: block;
   font-size: 1rem;
+  overflow-wrap: anywhere;
 }
 
 .legend-value span {
@@ -1009,6 +1029,7 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   gap: 16px;
+  align-items: flex-start;
   padding: 14px 0;
   border-bottom: 1px solid var(--border);
 }
@@ -1033,10 +1054,15 @@ button:disabled {
 
 .timeline-amount {
   text-align: right;
+  min-width: 0;
 }
 
 .timeline-amount form {
   margin-top: 8px;
+}
+
+.timeline-amount strong {
+  overflow-wrap: anywhere;
 }
 
 .timeline-tag {
@@ -1280,6 +1306,10 @@ button:disabled {
   gap: 10px;
 }
 
+.calendar-nav > * {
+  flex: 1 1 180px;
+}
+
 .calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -1300,6 +1330,7 @@ button:disabled {
   display: grid;
   gap: 10px;
   align-content: start;
+  min-width: 0;
   padding: 14px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
@@ -1354,6 +1385,11 @@ button:disabled {
 .calendar-item strong {
   display: block;
   margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+
+.calendar-item span {
+  overflow-wrap: anywhere;
 }
 
 .calendar-more {
@@ -1369,13 +1405,18 @@ button:disabled {
 }
 
 @media (max-width: 980px) {
+  .site-header,
+  .dashboard-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .hero,
   .dashboard-columns {
     grid-template-columns: 1fr;
   }
 
-  .donut-layout,
-  .calendar-grid {
+  .donut-layout {
     grid-template-columns: 1fr;
   }
 
@@ -1386,15 +1427,48 @@ button:disabled {
   .hero-metrics {
     grid-template-columns: 1fr;
   }
+
+  .dashboard-topline {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 860px) {
+  .app-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+
+  .app-nav-link {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .invite-card-head,
+  .admin-family-head,
+  .goal-card-head,
+  .timeline-row,
+  .legend-item {
+    flex-direction: column;
+  }
+
+  .timeline-amount,
+  .legend-value {
+    text-align: left;
+  }
+
+  .calendar-weekday {
+    display: none;
+  }
+
+  .calendar-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 680px) {
-  .site-header,
-  .dashboard-head {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
   .hero-card,
   .auth-card,
   .dashboard-panel,
@@ -1426,7 +1500,12 @@ button:disabled {
 
   .header-links {
     width: 100%;
-    justify-content: space-between;
+    justify-content: flex-start;
+  }
+
+  .header-links a,
+  .ghost-button {
+    flex: 1 1 160px;
   }
 
   .dashboard-topline {
@@ -1443,11 +1522,47 @@ button:disabled {
     height: 132px;
   }
 
-  .calendar-weekday {
-    display: none;
+  .income-form-actions > * {
+    width: 100%;
   }
 
   .calendar-day {
     min-height: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .app-shell {
+    width: min(1160px, calc(100% - 16px));
+  }
+
+  .brand-logo-image.size-md,
+  .brand-logo-image.size-sm {
+    width: min(220px, 100%);
+  }
+
+  .site-header {
+    padding: 18px 0;
+  }
+
+  .hero-card h1,
+  .auth-card h1,
+  .dashboard-head h1 {
+    font-size: clamp(2.1rem, 11vw, 3rem);
+  }
+
+  .calendar-grid,
+  .section-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .donut {
+    width: min(220px, 100%);
+    height: min(220px, calc(100vw - 80px));
+  }
+
+  .donut-center {
+    width: 126px;
+    height: 126px;
   }
 }
