@@ -19,6 +19,8 @@ export function AuthPanel({ mode }: AuthPanelProps) {
   const [inviteFamilyName, setInviteFamilyName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [messageTone, setMessageTone] = useState<"success" | "warning">("success");
+  const [messageActionLabel, setMessageActionLabel] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
   const title =
@@ -83,7 +85,13 @@ export function AuthPanel({ mode }: AuthPanelProps) {
       });
 
       const data = (await response.json().catch(() => null)) as
-        | { error?: string; message?: string; redirectTo?: string }
+        | {
+            actionLabel?: string;
+            error?: string;
+            message?: string;
+            redirectTo?: string;
+            suggestedAction?: "LOGIN" | "VERIFY_EMAIL";
+          }
         | null;
 
       if (!response.ok) {
@@ -108,6 +116,8 @@ export function AuthPanel({ mode }: AuthPanelProps) {
     event.preventDefault();
     setError(null);
     setMessage(null);
+    setMessageTone("success");
+    setMessageActionLabel(null);
     setPending(true);
 
     try {
@@ -145,6 +155,13 @@ export function AuthPanel({ mode }: AuthPanelProps) {
           router.refresh();
         });
         return;
+      }
+
+      if (data?.suggestedAction === "LOGIN") {
+        setMessageTone("warning");
+        setMessageActionLabel(data.actionLabel ?? "Ir a iniciar sesion");
+      } else if (data?.suggestedAction === "VERIFY_EMAIL") {
+        setMessageTone("warning");
       }
 
       setMessage(
@@ -240,7 +257,18 @@ export function AuthPanel({ mode }: AuthPanelProps) {
       </form>
 
       {error ? <div className="feedback error">{error}</div> : null}
-      {message ? <div className="feedback success">{message}</div> : null}
+      {message ? (
+        <div className={`feedback ${messageTone}`}>
+          <div>{message}</div>
+          {messageActionLabel ? (
+            <div className="feedback-actions">
+              <Link className="secondary-button" href={buildAuthHref("/login")}>
+                {messageActionLabel}
+              </Link>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="auth-footer">
         {mode === "login" ? (

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { recordSignupAttempt } from "@/lib/app-db";
+import {
+  getAuthAccountRegistrationStatus,
+  recordSignupAttempt,
+} from "@/lib/app-db";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 const signUpSchema = z.object({
@@ -21,6 +24,10 @@ function getSafeNextPath(value?: string) {
   }
 
   return value;
+}
+
+function isInvitationPath(value?: string) {
+  return Boolean(value && /^\/invitacion\/[^/?#]+$/.test(value));
 }
 
 export async function POST(request: Request) {
@@ -56,6 +63,74 @@ export async function POST(request: Request) {
 
   const supabase = await createServerSupabaseClient();
   const { email, password, fullName, emailRedirectTo, nextPath } = parsed.data;
+  const registrationStatus = await getAuthAccountRegistrationStatus(email);
+
+  if (registrationStatus.exists && registrationStatus.isConfirmed) {
+    const message = isInvitationPath(nextPath)
+      ? registrationStatus.hasActiveFamily
+        ? "Ya existe una cuenta activa con este correo. Inicia sesion con esa cuenta para revisar la invitacion."
+        : "Ya existe una cuenta activa con este correo. Inicia sesion para unirte a la familia invitada."
+      : "Ya existe una cuenta activa con este correo. Inicia sesion para continuar.";
+
+    await recordSignupAttempt({
+      email,
+      errorMessage: message,
+      fullName,
+      ipAddress,
+      nextPath,
+      status: "REJECTED",
+      userAgent,
+    });
+
+    return NextResponse.json({
+      actionLabel: isInvitationPath(nextPath)
+        ? "Entrar para unirte a la familia"
+        : "Ir a iniciar sesion",
+      message,
+      suggestedAction: "LOGIN",
+    });
+  }
+
+  if (registrationStatus.exists && !registrationStatus.isConfirmed) {
+    const { error: resendError } = await supabase.auth.resend({
+      type: "signup",
+      email,
+      options: {
+        emailRedirectTo,
+      },
+    });
+
+    if (resendError) {
+      await recordSignupAttempt({
+        email,
+        errorMessage: resendError.message,
+        fullName,
+        ipAddress,
+        nextPath,
+        status: "REJECTED",
+        userAgent,
+      });
+
+      return NextResponse.json({ error: resendError.message }, { status: 400 });
+    }
+
+    await recordSignupAttempt({
+      email,
+      fullName,
+      ipAddress,
+      nextPath,
+      status: "PENDING_CONFIRMATION",
+      userAgent,
+    });
+
+    return NextResponse.json({
+      message: isInvitationPath(nextPath)
+        ? "Esta cuenta ya existe pero todavia no confirmo el correo. Reenviamos el email para que, al confirmarlo, se una a la familia invitada."
+        : "Esta cuenta ya existe pero todavia no confirmo el correo. Reenviamos el email de confirmacion.",
+      suggestedAction: "VERIFY_EMAIL",
+    });
+  }
+
   const { data, error } = await supabase.auth.signUp({
     email,
     password,

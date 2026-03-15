@@ -500,6 +500,13 @@ button:disabled {
   color: #b45309;
 }
 
+.feedback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
 .auth-footer {
   display: flex;
   gap: 8px;
@@ -1435,15 +1442,17 @@ button:disabled {
 
 @media (max-width: 860px) {
   .app-nav {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    padding-bottom: 4px;
-    scrollbar-width: thin;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
   }
 
   .app-nav-link {
-    flex: 0 0 auto;
-    white-space: nowrap;
+    min-width: 0;
+    padding: 10px 12px;
+    font-size: 0.86rem;
+    white-space: normal;
+    text-align: center;
   }
 
   .invite-card-head,
@@ -1480,6 +1489,10 @@ button:disabled {
   .section-grid,
   .dashboard-grid {
     grid-template-columns: 1fr;
+  }
+
+  .app-nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .quick-links-grid {

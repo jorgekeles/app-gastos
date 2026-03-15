@@ -204,6 +204,12 @@ export type SignupAttemptRow = {
   nextPath: string | null;
 };
 
+export type AuthAccountRegistrationStatus = {
+  exists: boolean;
+  isConfirmed: boolean;
+  hasActiveFamily: boolean;
+};
+
 export type AcceptedInvitationResult = {
   familyId: string;
   familyName: string;
@@ -2926,6 +2932,56 @@ export async function markLatestSignupAttemptConfirmed(email: string) {
       confirmed_at = timezone('utc', now())
     where id in (select id from latest_attempt)
   `;
+}
+
+export async function getAuthAccountRegistrationStatus(
+  email: string,
+): Promise<AuthAccountRegistrationStatus> {
+  const normalizedEmail = email.trim().toLowerCase();
+
+  if (!normalizedEmail) {
+    return {
+      exists: false,
+      isConfirmed: false,
+      hasActiveFamily: false,
+    };
+  }
+
+  const rows = await sql<
+    {
+      emailConfirmedAt: string | null;
+      hasActiveFamily: boolean;
+    }[]
+  >`
+    select
+      u.email_confirmed_at::text as "emailConfirmedAt",
+      exists(
+        select 1
+        from public.family_members fm
+        where fm.user_id = u.id
+          and fm.status = 'ACTIVE'
+      ) as "hasActiveFamily"
+    from auth.users u
+    where lower(u.email) = ${normalizedEmail}
+      and u.deleted_at is null
+    limit 1
+  `;
+
+  const row = rows[0];
+
+  if (!row) {
+    return {
+      exists: false,
+      isConfirmed: false,
+      hasActiveFamily: false,
+    };
+  }
+
+  return {
+    exists: true,
+    isConfirmed: Boolean(row.emailConfirmedAt),
+    hasActiveFamily: row.hasActiveFamily,
+  };
 }
 
 export async function deleteFamilyFromAdminConsole(
