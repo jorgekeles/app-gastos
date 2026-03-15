@@ -30,6 +30,24 @@ function isInvitationPath(value?: string) {
   return Boolean(value && /^\/invitacion\/[^/?#]+$/.test(value));
 }
 
+function mapSupabaseAuthErrorMessage(message: string) {
+  const normalized = message.trim().toLowerCase();
+
+  if (
+    normalized.includes("email rate limit exceeded") ||
+    normalized.includes("email rate exceeded") ||
+    normalized.includes("over email rate limit")
+  ) {
+    return "Superaste el limite de correos de confirmacion de Supabase. Espera un rato antes de reenviar otro email o configura SMTP propio en Supabase para evitar este tope.";
+  }
+
+  if (normalized.includes("email address not authorized")) {
+    return "Supabase no permite enviar correos a esa direccion con el servicio por defecto. Para enviar a destinatarios reales necesitas configurar SMTP propio en Supabase.";
+  }
+
+  return message;
+}
+
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
   const parsed = signUpSchema.safeParse(payload);
@@ -101,9 +119,11 @@ export async function POST(request: Request) {
     });
 
     if (resendError) {
+      const friendlyMessage = mapSupabaseAuthErrorMessage(resendError.message);
+
       await recordSignupAttempt({
         email,
-        errorMessage: resendError.message,
+        errorMessage: friendlyMessage,
         fullName,
         ipAddress,
         nextPath,
@@ -111,7 +131,7 @@ export async function POST(request: Request) {
         userAgent,
       });
 
-      return NextResponse.json({ error: resendError.message }, { status: 400 });
+      return NextResponse.json({ error: friendlyMessage }, { status: 400 });
     }
 
     await recordSignupAttempt({
@@ -143,9 +163,11 @@ export async function POST(request: Request) {
   });
 
   if (error) {
+    const friendlyMessage = mapSupabaseAuthErrorMessage(error.message);
+
     await recordSignupAttempt({
       email,
-      errorMessage: error.message,
+      errorMessage: friendlyMessage,
       fullName,
       ipAddress,
       nextPath,
@@ -153,7 +175,7 @@ export async function POST(request: Request) {
       userAgent,
     });
 
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    return NextResponse.json({ error: friendlyMessage }, { status: 400 });
   }
 
   if (data.session) {
