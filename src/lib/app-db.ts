@@ -179,7 +179,29 @@ export type AdminConsoleData = {
   totalMembers: number;
   totalUsers: number;
   activeFamiliesLast7Days: number;
+  signupAttemptsCount: number;
   families: AdminFamilyUsageRow[];
+  signupAttempts: SignupAttemptRow[];
+};
+
+export type SignupAttemptStatus =
+  | "INVALID_PAYLOAD"
+  | "REJECTED"
+  | "PENDING_CONFIRMATION"
+  | "INSTANT_SESSION"
+  | "CONFIRMED";
+
+export type SignupAttemptRow = {
+  id: string;
+  fullName: string | null;
+  email: string | null;
+  status: SignupAttemptStatus;
+  errorMessage: string | null;
+  attemptedAt: string;
+  confirmedAt: string | null;
+  ipAddress: string | null;
+  userAgent: string | null;
+  nextPath: string | null;
 };
 
 export type AcceptedInvitationResult = {
@@ -409,6 +431,27 @@ create table if not exists public.invitations (
   updated_at timestamptz not null default timezone('utc', now())
 );
 
+create table if not exists public.signup_attempts (
+  id uuid primary key,
+  full_name text,
+  email text,
+  status text not null check (
+    status in (
+      'INVALID_PAYLOAD',
+      'REJECTED',
+      'PENDING_CONFIRMATION',
+      'INSTANT_SESSION',
+      'CONFIRMED'
+    )
+  ),
+  error_message text,
+  attempted_at timestamptz not null default timezone('utc', now()),
+  confirmed_at timestamptz,
+  ip_address text,
+  user_agent text,
+  next_path text
+);
+
 create index if not exists family_members_user_id_idx on public.family_members (user_id);
 create index if not exists incomes_family_id_date_idx on public.incomes (family_id, transaction_date desc);
 create index if not exists incomes_family_id_created_by_idx on public.incomes (family_id, created_by_user_id);
@@ -419,6 +462,8 @@ create index if not exists savings_transactions_goal_id_idx on public.savings_tr
 create index if not exists notes_family_id_created_at_idx on public.notes (family_id, created_at desc);
 create index if not exists invitations_family_id_created_at_idx on public.invitations (family_id, created_at desc);
 create index if not exists invitations_token_idx on public.invitations (token);
+create index if not exists signup_attempts_attempted_at_idx on public.signup_attempts (attempted_at desc);
+create index if not exists signup_attempts_email_idx on public.signup_attempts (email, attempted_at desc);
 `;
 
 type GlobalDbState = typeof globalThis & {
@@ -2705,66 +2750,87 @@ export async function getAdminConsoleData(
   await ensureAppSchema();
   const { fullName } = await ensureAppUser(authUser);
 
-  const families = await sql<
-    (Omit<AdminFamilyUsageRow, "version" | "expiresAt">)[]
-  >`
-    with member_counts as (
-      select
-        family_id,
-        count(*)::int as "membersCount"
-      from public.family_members
-      where status = 'ACTIVE'
-      group by family_id
-    ),
-    active_invitation_counts as (
-      select
-        family_id,
-        count(*)::int as "activeInvitationsCount"
-      from public.invitations
-      where accepted_at is null
-        and revoked_at is null
-        and expires_at >= timezone('utc', now())
-      group by family_id
-    ),
-    family_last_usage as (
-      select
-        fm.family_id,
-        max(u.updated_at)::text as "lastActivityAt"
-      from public.family_members fm
-      join public.users u on u.id = fm.user_id
-      where fm.status = 'ACTIVE'
-      group by fm.family_id
-    )
-    select
-      f.id,
-      f.name,
-      f.slug,
-      f.created_at::text as "createdAt",
-      creator.full_name as "createdByName",
-      creator.email as "createdByEmail",
-      coalesce(mc."membersCount", 0)::int as "membersCount",
-      coalesce(aic."activeInvitationsCount", 0)::int as "activeInvitationsCount",
-      flu."lastActivityAt"
-    from public.families f
-    join public.users creator on creator.id = f.created_by_user_id
-    left join member_counts mc on mc.family_id = f.id
-    left join active_invitation_counts aic on aic.family_id = f.id
-    left join family_last_usage flu on flu.family_id = f.id
-    order by coalesce(flu."lastActivityAt", f.created_at::text) desc, f.created_at desc
-  `;
-
-  const totals = await sql<
-    { totalFamilies: number; totalMembers: number; totalUsers: number }[]
-  >`
-    select
-      (select count(*)::int from public.families) as "totalFamilies",
-      (
-        select count(*)::int
+  const [families, totals, signupAttempts] = await Promise.all([
+    sql<(Omit<AdminFamilyUsageRow, "version" | "expiresAt">)[]>`
+      with member_counts as (
+        select
+          family_id,
+          count(*)::int as "membersCount"
         from public.family_members
         where status = 'ACTIVE'
-      ) as "totalMembers",
-      (select count(*)::int from public.users) as "totalUsers"
-  `;
+        group by family_id
+      ),
+      active_invitation_counts as (
+        select
+          family_id,
+          count(*)::int as "activeInvitationsCount"
+        from public.invitations
+        where accepted_at is null
+          and revoked_at is null
+          and expires_at >= timezone('utc', now())
+        group by family_id
+      ),
+      family_last_usage as (
+        select
+          fm.family_id,
+          max(u.updated_at)::text as "lastActivityAt"
+        from public.family_members fm
+        join public.users u on u.id = fm.user_id
+        where fm.status = 'ACTIVE'
+        group by fm.family_id
+      )
+      select
+        f.id,
+        f.name,
+        f.slug,
+        f.created_at::text as "createdAt",
+        creator.full_name as "createdByName",
+        creator.email as "createdByEmail",
+        coalesce(mc."membersCount", 0)::int as "membersCount",
+        coalesce(aic."activeInvitationsCount", 0)::int as "activeInvitationsCount",
+        flu."lastActivityAt"
+      from public.families f
+      join public.users creator on creator.id = f.created_by_user_id
+      left join member_counts mc on mc.family_id = f.id
+      left join active_invitation_counts aic on aic.family_id = f.id
+      left join family_last_usage flu on flu.family_id = f.id
+      order by coalesce(flu."lastActivityAt", f.created_at::text) desc, f.created_at desc
+    `,
+    sql<
+      {
+        totalFamilies: number;
+        totalMembers: number;
+        totalUsers: number;
+        signupAttemptsCount: number;
+      }[]
+    >`
+      select
+        (select count(*)::int from public.families) as "totalFamilies",
+        (
+          select count(*)::int
+          from public.family_members
+          where status = 'ACTIVE'
+        ) as "totalMembers",
+        (select count(*)::int from public.users) as "totalUsers",
+        (select count(*)::int from public.signup_attempts) as "signupAttemptsCount"
+    `,
+    sql<SignupAttemptRow[]>`
+      select
+        id,
+        full_name as "fullName",
+        email,
+        status,
+        error_message as "errorMessage",
+        attempted_at::text as "attemptedAt",
+        confirmed_at::text as "confirmedAt",
+        ip_address as "ipAddress",
+        user_agent as "userAgent",
+        next_path as "nextPath"
+      from public.signup_attempts
+      order by attempted_at desc
+      limit 30
+    `,
+  ]);
 
   const familiesWithPlan = families.map((family) => ({
     ...family,
@@ -2789,8 +2855,77 @@ export async function getAdminConsoleData(
     totalMembers: summary.totalMembers,
     totalUsers: summary.totalUsers,
     activeFamiliesLast7Days,
+    signupAttemptsCount: summary.signupAttemptsCount,
     families: familiesWithPlan,
+    signupAttempts,
   };
+}
+
+export async function recordSignupAttempt(input: {
+  email?: string | null;
+  errorMessage?: string | null;
+  fullName?: string | null;
+  ipAddress?: string | null;
+  nextPath?: string | null;
+  status: SignupAttemptStatus;
+  userAgent?: string | null;
+}) {
+  await ensureAppSchema();
+
+  const email = input.email?.trim().toLowerCase() || null;
+  const fullName = input.fullName?.trim() || null;
+  const nextPath = input.nextPath?.trim() || null;
+  const userAgent = input.userAgent?.trim() || null;
+  const ipAddress = input.ipAddress?.trim() || null;
+  const errorMessage = input.errorMessage?.trim() || null;
+
+  await sql`
+    insert into public.signup_attempts (
+      id,
+      full_name,
+      email,
+      status,
+      error_message,
+      ip_address,
+      user_agent,
+      next_path
+    )
+    values (
+      ${crypto.randomUUID()}::uuid,
+      ${fullName},
+      ${email},
+      ${input.status},
+      ${errorMessage},
+      ${ipAddress},
+      ${userAgent},
+      ${nextPath}
+    )
+  `;
+}
+
+export async function markLatestSignupAttemptConfirmed(email: string) {
+  await ensureAppSchema();
+  const normalizedEmail = email.trim().toLowerCase();
+
+  if (!normalizedEmail) {
+    return;
+  }
+
+  await sql`
+    with latest_attempt as (
+      select id
+      from public.signup_attempts
+      where email = ${normalizedEmail}
+        and status = 'PENDING_CONFIRMATION'
+      order by attempted_at desc
+      limit 1
+    )
+    update public.signup_attempts
+    set
+      status = 'CONFIRMED',
+      confirmed_at = timezone('utc', now())
+    where id in (select id from latest_attempt)
+  `;
 }
 
 export async function deleteFamilyFromAdminConsole(

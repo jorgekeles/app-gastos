@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { acceptInvitationForUser } from "@/lib/app-db";
+import {
+  acceptInvitationForUser,
+  markLatestSignupAttemptConfirmed,
+} from "@/lib/app-db";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 function getSafeNextPath(value: string | null) {
@@ -58,6 +61,14 @@ export async function GET(request: Request) {
         return NextResponse.redirect(invitationUrl, { status: 303 });
       }
     }
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (user?.email) {
+    await markLatestSignupAttemptConfirmed(user.email);
   }
 
   return NextResponse.redirect(new URL(next, requestUrl.origin));
