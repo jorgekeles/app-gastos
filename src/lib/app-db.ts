@@ -558,6 +558,17 @@ function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
 
+function getProtectedAdminEmails() {
+  const raw =
+    process.env["APP_ADMIN_EMAILS"] ?? process.env["ADMIN_EMAILS"] ?? "";
+  const configured = raw
+    .split(",")
+    .map((item) => normalizeEmail(item))
+    .filter(Boolean);
+
+  return configured.length > 0 ? configured : ["jorge.keles@gmail.com"];
+}
+
 function normalizePhone(value: string) {
   const trimmed = value.trim();
   const plusPrefix = trimmed.startsWith("+") ? "+" : "";
@@ -3010,10 +3021,48 @@ export async function deleteFamilyFromAdminConsole(
     throw new Error("La cuenta familiar ya no existe.");
   }
 
+  const members = await sql<{ userId: string; email: string }[]>`
+    select distinct
+      u.id as "userId",
+      u.email
+    from public.family_members fm
+    join public.users u on u.id = fm.user_id
+    where fm.family_id = ${normalizedFamilyId}::uuid
+  `;
+
   await sql`
     delete from public.families
     where id = ${normalizedFamilyId}::uuid
   `;
+
+  const protectedEmails = new Set(getProtectedAdminEmails());
+
+  for (const member of members) {
+    const remainingMemberships = await sql<{ count: number }[]>`
+      select count(*)::int as count
+      from public.family_members
+      where user_id = ${member.userId}::uuid
+        and status = 'ACTIVE'
+    `;
+
+    if ((remainingMemberships[0]?.count ?? 0) > 0) {
+      continue;
+    }
+
+    if (protectedEmails.has(normalizeEmail(member.email))) {
+      continue;
+    }
+
+    await sql`
+      delete from public.users
+      where id = ${member.userId}::uuid
+    `;
+
+    await sql`
+      delete from auth.users
+      where id = ${member.userId}::uuid
+    `;
+  }
 
   return family;
 }
