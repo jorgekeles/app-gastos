@@ -182,7 +182,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
         </article>
 
         <div className="module-stack">
-          <article className="timeline-card">
+          <article className="timeline-card admin-attempts-card">
             <div className="panel-head">
               <div>
                 <h2>Intentos de registro</h2>
@@ -190,38 +190,40 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
               </div>
             </div>
 
-            {data.signupAttempts.length > 0 ? (
-              data.signupAttempts.map((attempt) => (
-                <div className="timeline-row" key={attempt.id}>
-                  <div>
-                    <strong>
-                      {attempt.fullName || "Sin nombre"} · {attempt.email || "Sin email"}
-                    </strong>
-                    <span>{formatUsageDate(attempt.attemptedAt)}</span>
-                    {attempt.errorMessage ? (
-                      <span className="row-note">{attempt.errorMessage}</span>
-                    ) : null}
-                    {attempt.ipAddress ? (
-                      <span className="row-note">IP: {attempt.ipAddress}</span>
-                    ) : null}
-                  </div>
-                  <div className="timeline-amount">
-                    <span className={`status-chip ${signupStatusTone(attempt.status)}`}>
-                      {signupStatusLabel(attempt.status)}
-                    </span>
-                    {attempt.confirmedAt ? (
-                      <span className="row-note">
-                        Confirmado {formatUsageDate(attempt.confirmedAt)}
+            <div className="admin-attempts-scroll">
+              {data.signupAttempts.length > 0 ? (
+                data.signupAttempts.map((attempt) => (
+                  <div className="timeline-row" key={attempt.id}>
+                    <div>
+                      <strong>
+                        {attempt.fullName || "Sin nombre"} · {attempt.email || "Sin email"}
+                      </strong>
+                      <span>{formatUsageDate(attempt.attemptedAt)}</span>
+                      {attempt.errorMessage ? (
+                        <span className="row-note">{attempt.errorMessage}</span>
+                      ) : null}
+                      {attempt.ipAddress ? (
+                        <span className="row-note">IP: {attempt.ipAddress}</span>
+                      ) : null}
+                    </div>
+                    <div className="timeline-amount">
+                      <span className={`status-chip ${signupStatusTone(attempt.status)}`}>
+                        {signupStatusLabel(attempt.status)}
                       </span>
-                    ) : null}
+                      {attempt.confirmedAt ? (
+                        <span className="row-note">
+                          Confirmado {formatUsageDate(attempt.confirmedAt)}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
+                ))
+              ) : (
+                <div className="empty-state">
+                  Todavia no hay intentos de registro guardados en la app.
                 </div>
-              ))
-            ) : (
-              <div className="empty-state">
-                Todavia no hay intentos de registro guardados en la app.
-              </div>
-            )}
+              )}
+            </div>
           </article>
 
           <article className="dashboard-panel">
