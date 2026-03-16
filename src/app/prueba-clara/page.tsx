@@ -32,11 +32,15 @@ export default function ClaraPreviewPage() {
       <section className="clara-shell">
         <header className="clara-header">
           <div className="clara-brand">
-            <span className="clara-brand-mark">C</span>
-            <div>
-              <strong>Clara</strong>
-              <span>Prueba visual para AppGastos</span>
+            <div className="clara-wordmark">
+              <Image
+                alt="Logo Clara"
+                className="clara-wordmark-image"
+                priority
+                src={claraMoodboard}
+              />
             </div>
+            <span>Prueba visual para AppGastos</span>
           </div>
 
           <div className="clara-actions">

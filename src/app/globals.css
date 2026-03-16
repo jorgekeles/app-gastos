@@ -1506,34 +1506,29 @@ button:disabled {
 
 .clara-brand {
   gap: 14px;
+  min-width: 0;
 }
 
-.clara-brand-mark {
-  width: 52px;
-  height: 52px;
-  border-radius: 18px;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(145deg, rgba(94, 68, 81, 0.96), rgba(126, 152, 139, 0.92));
-  box-shadow: 0 18px 34px rgba(94, 68, 81, 0.2);
-  color: #fffaf6;
-  font-family: var(--font-clara-display), serif;
-  font-size: 1.9rem;
-  font-weight: 700;
-}
-
-.clara-brand strong,
 .clara-copy-card h1,
 .clara-summary h2,
 .clara-panel h3 {
   font-family: var(--font-clara-display), serif;
 }
 
-.clara-brand strong {
+.clara-wordmark {
+  width: min(320px, 100%);
+  min-width: 0;
+  padding: 10px 14px;
+  border-radius: 22px;
+  border: 1px solid rgba(81, 60, 61, 0.08);
+  background: rgba(255, 250, 245, 0.72);
+  box-shadow: 0 16px 34px rgba(94, 68, 81, 0.08);
+}
+
+.clara-wordmark-image {
   display: block;
-  font-size: 1.6rem;
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  width: 100%;
+  height: auto;
 }
 
 .clara-brand span,
@@ -1545,6 +1540,7 @@ button:disabled {
 }
 
 .clara-brand span {
+  min-width: 0;
   font-family: var(--font-clara-body), sans-serif;
   font-size: 0.96rem;
 }
@@ -1938,6 +1934,15 @@ button:disabled {
 @media (max-width: 680px) {
   .clara-preview {
     padding: 18px 0 42px;
+  }
+
+  .clara-brand {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .clara-wordmark {
+    width: min(260px, 100%);
   }
 
   .clara-copy-card,
