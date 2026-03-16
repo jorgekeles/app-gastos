@@ -1509,26 +1509,40 @@ button:disabled {
   min-width: 0;
 }
 
+.clara-brand-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
 .clara-copy-card h1,
 .clara-summary h2,
 .clara-panel h3 {
   font-family: var(--font-clara-display), serif;
 }
 
-.clara-wordmark {
-  width: min(320px, 100%);
-  min-width: 0;
-  padding: 10px 14px;
-  border-radius: 22px;
-  border: 1px solid rgba(81, 60, 61, 0.08);
+.clara-brand-icon {
+  width: 84px;
+  height: 84px;
+  flex: 0 0 auto;
+  padding: 8px;
+  border-radius: 24px;
   background: rgba(255, 250, 245, 0.72);
   box-shadow: 0 16px 34px rgba(94, 68, 81, 0.08);
 }
 
-.clara-wordmark-image {
+.clara-brand-icon-image {
   display: block;
   width: 100%;
   height: auto;
+}
+
+.clara-brand strong {
+  display: block;
+  font-size: clamp(1.7rem, 3vw, 2.4rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
 }
 
 .clara-brand span,
@@ -1941,8 +1955,9 @@ button:disabled {
     align-items: flex-start;
   }
 
-  .clara-wordmark {
-    width: min(260px, 100%);
+  .clara-brand-icon {
+    width: 72px;
+    height: 72px;
   }
 
   .clara-copy-card,
