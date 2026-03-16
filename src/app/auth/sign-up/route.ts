@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
+  deleteUnusedUnconfirmedAuthAccount,
   getAuthAccountRegistrationStatus,
   recordSignupAttempt,
 } from "@/lib/app-db";
@@ -9,8 +10,8 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 const signUpSchema = z.object({
   fullName: z.string().trim().min(2).max(80),
   email: z.email(),
+  confirmEmail: z.email(),
   password: z.string().min(8),
-  emailRedirectTo: z.url(),
   nextPath: z.string().trim().optional(),
 });
 
@@ -80,7 +81,25 @@ export async function POST(request: Request) {
   }
 
   const supabase = await createServerSupabaseClient();
-  const { email, password, fullName, emailRedirectTo, nextPath } = parsed.data;
+  const { email, confirmEmail, password, fullName, nextPath } = parsed.data;
+
+  if (email.trim().toLowerCase() !== confirmEmail.trim().toLowerCase()) {
+    await recordSignupAttempt({
+      email,
+      errorMessage: "Los dos emails no coinciden.",
+      fullName,
+      ipAddress,
+      nextPath,
+      status: "REJECTED",
+      userAgent,
+    });
+
+    return NextResponse.json(
+      { error: "Los dos emails deben coincidir para crear la cuenta." },
+      { status: 400 },
+    );
+  }
+
   const registrationStatus = await getAuthAccountRegistrationStatus(email);
 
   if (registrationStatus.exists && registrationStatus.isConfirmed) {
@@ -110,20 +129,15 @@ export async function POST(request: Request) {
   }
 
   if (registrationStatus.exists && !registrationStatus.isConfirmed) {
-    const { error: resendError } = await supabase.auth.resend({
-      type: "signup",
-      email,
-      options: {
-        emailRedirectTo,
-      },
-    });
+    const deleted = await deleteUnusedUnconfirmedAuthAccount(email);
 
-    if (resendError) {
-      const friendlyMessage = mapSupabaseAuthErrorMessage(resendError.message);
+    if (!deleted) {
+      const message =
+        "Ya existe una cuenta pendiente con este correo y este proyecto todavia conserva ese registro. Si necesitas reutilizarlo, primero elimina ese usuario o termina el alta anterior.";
 
       await recordSignupAttempt({
         email,
-        errorMessage: friendlyMessage,
+        errorMessage: message,
         fullName,
         ipAddress,
         nextPath,
@@ -131,31 +145,14 @@ export async function POST(request: Request) {
         userAgent,
       });
 
-      return NextResponse.json({ error: friendlyMessage }, { status: 400 });
+      return NextResponse.json({ error: message }, { status: 400 });
     }
-
-    await recordSignupAttempt({
-      email,
-      fullName,
-      ipAddress,
-      nextPath,
-      status: "PENDING_CONFIRMATION",
-      userAgent,
-    });
-
-    return NextResponse.json({
-      message: isInvitationPath(nextPath)
-        ? "Esta cuenta ya existe pero todavia no confirmo el correo. Reenviamos el email para que, al confirmarlo, se una a la familia invitada."
-        : "Esta cuenta ya existe pero todavia no confirmo el correo. Reenviamos el email de confirmacion.",
-      suggestedAction: "VERIFY_EMAIL",
-    });
   }
 
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
-      emailRedirectTo,
       data: {
         full_name: fullName,
       },
@@ -193,17 +190,21 @@ export async function POST(request: Request) {
     });
   }
 
+  const verificationEnabledMessage =
+    "El proyecto todavia tiene activa la verificacion por correo en Supabase. Desactiva 'Confirm email' en Authentication > Providers > Email para usar el alta inmediata sin mail.";
+
   await recordSignupAttempt({
     email,
+    errorMessage: verificationEnabledMessage,
     fullName,
     ipAddress,
     nextPath,
-    status: "PENDING_CONFIRMATION",
+    status: "REJECTED",
     userAgent,
   });
 
-  return NextResponse.json({
-    message:
-      "Te enviamos un correo de confirmacion. Cuando actives tu cuenta vas a poder entrar al dashboard.",
-  });
+  return NextResponse.json(
+    { error: verificationEnabledMessage },
+    { status: 400 },
+  );
 }

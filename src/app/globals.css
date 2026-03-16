@@ -1024,6 +1024,26 @@ button:disabled {
   font-size: 0.92rem;
 }
 
+.account-meta-grid {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.account-meta-grid > div {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(var(--primary-rgb), 0.05);
+}
+
+.account-meta-grid strong {
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
 .admin-notes {
   align-items: flex-start;
 }
@@ -1449,8 +1469,10 @@ button:disabled {
 
   .app-nav-link {
     min-width: 0;
-    padding: 10px 12px;
-    font-size: 0.86rem;
+    min-height: 44px;
+    padding: 9px 10px;
+    font-size: 0.8rem;
+    line-height: 1.15;
     white-space: normal;
     text-align: center;
   }
@@ -1492,7 +1514,7 @@ button:disabled {
   }
 
   .app-nav {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .quick-links-grid {
@@ -1541,6 +1563,14 @@ button:disabled {
 
   .calendar-day {
     min-height: auto;
+  }
+}
+
+@media (max-width: 420px) {
+  .app-nav-link {
+    min-height: 42px;
+    padding: 8px 7px;
+    font-size: 0.75rem;
   }
 }
 

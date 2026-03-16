@@ -2995,6 +2995,66 @@ export async function getAuthAccountRegistrationStatus(
   };
 }
 
+export async function deleteUnusedUnconfirmedAuthAccount(email: string) {
+  await ensureAppSchema();
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!normalizedEmail) {
+    return false;
+  }
+
+  const rows = await sql<
+    {
+      id: string;
+      hasActiveFamily: boolean;
+      isConfirmed: boolean;
+    }[]
+  >`
+    select
+      u.id::text as id,
+      exists(
+        select 1
+        from public.family_members fm
+        where fm.user_id = u.id
+          and fm.status = 'ACTIVE'
+      ) as "hasActiveFamily",
+      (u.email_confirmed_at is not null) as "isConfirmed"
+    from auth.users u
+    where lower(u.email) = ${normalizedEmail}
+      and u.deleted_at is null
+    limit 1
+  `;
+
+  const row = rows[0];
+
+  if (!row || row.isConfirmed || row.hasActiveFamily) {
+    return false;
+  }
+
+  await sql`
+    delete from public.users
+    where id = ${row.id}::uuid
+  `;
+
+  await sql`
+    delete from auth.users
+    where id = ${row.id}::uuid
+  `;
+
+  return true;
+}
+
+export async function getAccountPageData(authUser: AuthUser) {
+  const context = await ensureUserAndFamily(authUser);
+
+  return {
+    family: context.family,
+    fullName: context.fullName,
+    email: context.email,
+    role: context.role,
+  };
+}
+
 export async function deleteFamilyFromAdminConsole(
   authUser: AuthUser,
   familyId: string,

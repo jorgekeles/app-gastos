@@ -13,6 +13,7 @@ export function AuthPanel({ mode }: AuthPanelProps) {
   const router = useRouter();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
+  const [confirmEmail, setConfirmEmail] = useState("");
   const [password, setPassword] = useState("");
   const [nextPath, setNextPath] = useState("/dashboard");
   const [inviteEmail, setInviteEmail] = useState("");
@@ -28,7 +29,7 @@ export function AuthPanel({ mode }: AuthPanelProps) {
   const subtitle =
     mode === "login"
       ? "Ingresá para ver el dashboard, próximos vencimientos y movimientos compartidos."
-      : "Registrate para empezar a construir el espacio financiero privado de tu familia.";
+      : "Registrate para empezar a construir el espacio financiero privado de tu familia y repite el email para confirmar que esta bien escrito.";
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
@@ -43,6 +44,7 @@ export function AuthPanel({ mode }: AuthPanelProps) {
     if (invitedEmail) {
       setInviteEmail(invitedEmail);
       setEmail(invitedEmail);
+      setConfirmEmail(invitedEmail);
     }
 
     if (familyName) {
@@ -90,7 +92,7 @@ export function AuthPanel({ mode }: AuthPanelProps) {
             error?: string;
             message?: string;
             redirectTo?: string;
-            suggestedAction?: "LOGIN" | "VERIFY_EMAIL";
+            suggestedAction?: "LOGIN";
           }
         | null;
 
@@ -136,15 +138,16 @@ export function AuthPanel({ mode }: AuthPanelProps) {
         return;
       }
 
-      const emailRedirectUrl = new URL("/auth/callback", window.location.origin);
-      emailRedirectUrl.searchParams.set("next", nextPath);
+      if (email.trim().toLowerCase() !== confirmEmail.trim().toLowerCase()) {
+        throw new Error("Los dos emails deben coincidir para crear la cuenta.");
+      }
 
       const data = await postAuthRequest("/auth/sign-up", {
         fullName,
         email,
+        confirmEmail,
         password,
         nextPath,
-        emailRedirectTo: emailRedirectUrl.toString(),
       });
 
       if (data?.redirectTo) {
@@ -160,13 +163,10 @@ export function AuthPanel({ mode }: AuthPanelProps) {
       if (data?.suggestedAction === "LOGIN") {
         setMessageTone("warning");
         setMessageActionLabel(data.actionLabel ?? "Ir a iniciar sesion");
-      } else if (data?.suggestedAction === "VERIFY_EMAIL") {
-        setMessageTone("warning");
       }
 
       setMessage(
-        data?.message ??
-          "Te enviamos un correo de confirmacion. Cuando actives tu cuenta vas a poder entrar al dashboard.",
+        data?.message ?? "La cuenta se proceso correctamente.",
       );
     } catch (submitError) {
       setError(
@@ -232,6 +232,21 @@ export function AuthPanel({ mode }: AuthPanelProps) {
             value={email}
           />
         </label>
+
+        {mode === "register" ? (
+          <label>
+            Repetir email
+            <input
+              autoComplete="email"
+              name="confirmEmail"
+              onChange={(event) => setConfirmEmail(event.target.value)}
+              placeholder="Repite el mismo correo"
+              required
+              type="email"
+              value={confirmEmail}
+            />
+          </label>
+        ) : null}
 
         <label>
           Contrasena
