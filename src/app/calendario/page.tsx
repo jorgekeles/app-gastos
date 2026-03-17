@@ -170,9 +170,29 @@ export default async function CalendarPage({
               </div>
 
               {day.incomeTotal > 0 ? (
-                <div className="calendar-totals income">
-                  Ingresos {formatMoney(day.incomeTotal, data.family.baseCurrency)}
-                </div>
+                <button
+                  aria-label={`Ver composicion de ingresos del ${day.date}`}
+                  className="calendar-totals income calendar-total-popover"
+                  type="button"
+                >
+                  <span>
+                    Ingresos {formatMoney(day.incomeTotal, data.family.baseCurrency)}
+                  </span>
+                  <div className="calendar-popover" role="tooltip">
+                    <strong>Ingresos que componen el total</strong>
+                    <div className="calendar-popover-list">
+                      {day.incomes.map((income) => (
+                        <div className="calendar-popover-item" key={income.id}>
+                          <span>{income.title}</span>
+                          <small>
+                            {formatMoney(income.amountOriginal, income.currency)}
+                            {income.category ? ` · ${income.category}` : ""}
+                          </small>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </button>
               ) : null}
 
               {day.expenseTotal > 0 ? (
