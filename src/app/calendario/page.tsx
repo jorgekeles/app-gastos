@@ -22,6 +22,38 @@ function deriveStatus(status: PaymentStatus, date: string) {
   return status;
 }
 
+function statusLabel(status: PaymentStatus) {
+  switch (status) {
+    case "PAID":
+      return "Pagado";
+    case "OVERDUE":
+      return "Vencido";
+    case "CANCELED":
+      return "Cancelado";
+    case "PENDING":
+    default:
+      return "Pendiente";
+  }
+}
+
+function expenseKindLabel(kind: string) {
+  switch (kind) {
+    case "RECURRING":
+      return "Gasto recurrente";
+    case "CREDIT_CARD":
+      return "Tarjeta de credito";
+    case "MORTGAGE":
+      return "Hipoteca";
+    case "LOAN":
+      return "Prestamo";
+    case "INSTALLMENT":
+      return "En cuotas";
+    case "ONE_TIME":
+    default:
+      return "Gasto unico";
+  }
+}
+
 export default async function CalendarPage({
   searchParams,
 }: CalendarPageProps) {
@@ -29,8 +61,13 @@ export default async function CalendarPage({
   const params = (await searchParams) ?? {};
   const monthParam =
     typeof params["month"] === "string" ? params["month"] : undefined;
+  const selectedExpenseId =
+    typeof params["expense"] === "string" ? params["expense"] : undefined;
   const data = await getCalendarPageData(user, monthParam);
   const balance = data.monthIncomeTotal - data.monthExpenseTotal;
+  const selectedExpense = selectedExpenseId
+    ? data.days.flatMap((day) => day.expenses).find((expense) => expense.id === selectedExpenseId)
+    : null;
 
   return (
     <ProtectedShell
@@ -153,13 +190,19 @@ export default async function CalendarPage({
                 ))}
 
                 {day.expenses.slice(0, 2).map((expense) => (
-                  <div className="calendar-item expense" key={expense.id}>
+                  <Link
+                    className={`calendar-item expense ${
+                      selectedExpense?.id === expense.id ? "is-selected" : ""
+                    }`}
+                    href={`/calendario?month=${data.currentMonthParam}&expense=${expense.id}`}
+                    key={expense.id}
+                  >
                     <strong>{expense.title}</strong>
                     <span>
                       {formatMoney(expense.amountOriginal, expense.currency)} ·{" "}
-                      {deriveStatus(expense.paymentStatus, expense.dueDate)}
+                      {statusLabel(deriveStatus(expense.paymentStatus, expense.dueDate))}
                     </span>
-                  </div>
+                  </Link>
                 ))}
 
                 {day.incomes.length + day.expenses.length > 4 ? (
@@ -171,6 +214,87 @@ export default async function CalendarPage({
             </article>
           ))}
         </div>
+
+        {selectedExpense ? (
+          <article className="dashboard-panel calendar-detail-panel">
+            <div className="panel-head">
+              <div>
+                <h2>Detalle del gasto</h2>
+                <p>Informacion completa del movimiento seleccionado.</p>
+              </div>
+
+              <Link className="ghost-button" href={`/calendario?month=${data.currentMonthParam}`}>
+                Cerrar detalle
+              </Link>
+            </div>
+
+            <div className="calendar-detail-grid">
+              <div>
+                <span className="admin-label">Gasto</span>
+                <strong>{selectedExpense.title}</strong>
+                <p className="calendar-detail-copy">
+                  {selectedExpense.notes?.trim()
+                    ? selectedExpense.notes
+                    : "Sin descripcion adicional cargada para este gasto."}
+                </p>
+              </div>
+
+              <div>
+                <span className="admin-label">Monto</span>
+                <strong>
+                  {formatMoney(selectedExpense.amountOriginal, selectedExpense.currency)}
+                </strong>
+                <p className="calendar-detail-copy">
+                  Base{" "}
+                  {formatMoney(
+                    selectedExpense.amountBaseSnapshot,
+                    data.family.baseCurrency,
+                  )}
+                </p>
+              </div>
+
+              <div>
+                <span className="admin-label">Fecha y estado</span>
+                <strong>{selectedExpense.dueDate}</strong>
+                <div className="row-chip-group">
+                  <span
+                    className={`status-chip status-${deriveStatus(
+                      selectedExpense.paymentStatus,
+                      selectedExpense.dueDate,
+                    ).toLowerCase()}`}
+                  >
+                    {statusLabel(
+                      deriveStatus(
+                        selectedExpense.paymentStatus,
+                        selectedExpense.dueDate,
+                      ),
+                    )}
+                  </span>
+                  <span className="status-chip status-neutral">
+                    {selectedExpense.entryMode === "PROJECTED" ? "Proyectado" : "Real"}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <span className="admin-label">Tipo</span>
+                <strong>{expenseKindLabel(selectedExpense.expenseKind)}</strong>
+                <div className="row-chip-group">
+                  {selectedExpense.expenseKind === "RECURRING" ? (
+                    <span className="status-chip status-accent">Recurrente</span>
+                  ) : null}
+                  {selectedExpense.installmentNumber &&
+                  selectedExpense.totalInstallments ? (
+                    <span className="status-chip status-primary">
+                      Cuota {selectedExpense.installmentNumber}/
+                      {selectedExpense.totalInstallments}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </article>
+        ) : null}
       </section>
     </ProtectedShell>
   );
