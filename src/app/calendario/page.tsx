@@ -67,24 +67,46 @@ export default async function CalendarPage({
           <div>
             <h2>{data.monthLabel}</h2>
             <p>
-              Navega entre meses para revisar pasado, presente y compromisos
-              futuros.
+              Navega entre meses o salta directo al mes y anio que quieras
+              revisar.
             </p>
           </div>
 
-          <div className="calendar-nav">
-            <Link
-              className="secondary-button"
-              href={`/calendario?month=${data.previousMonthParam}`}
-            >
-              Mes anterior
-            </Link>
-            <Link
-              className="secondary-button"
-              href={`/calendario?month=${data.nextMonthParam}`}
-            >
-              Mes siguiente
-            </Link>
+          <div className="calendar-controls">
+            <div className="calendar-nav">
+              <Link
+                className="secondary-button"
+                href={`/calendario?month=${data.previousMonthParam}`}
+              >
+                Mes anterior
+              </Link>
+              <Link
+                className="secondary-button"
+                href={`/calendario?month=${data.nextMonthParam}`}
+              >
+                Mes siguiente
+              </Link>
+            </div>
+
+            <form className="calendar-jump-form" method="get">
+              <label className="calendar-jump-label">
+                Elegir mes y anio
+                <input
+                  className="calendar-month-input"
+                  defaultValue={data.currentMonthParam}
+                  name="month"
+                  type="month"
+                />
+              </label>
+
+              <button className="primary-button" type="submit">
+                Ir
+              </button>
+
+              <Link className="ghost-button" href="/calendario">
+                Mes actual
+              </Link>
+            </form>
           </div>
         </div>
 

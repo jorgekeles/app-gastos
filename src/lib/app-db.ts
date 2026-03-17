@@ -2781,6 +2781,7 @@ export async function getCalendarPageData(authUser: AuthUser, monthParam?: strin
   return {
     family: context.family,
     fullName: context.fullName,
+    currentMonthParam: formatDateKey(monthStart).slice(0, 7),
     monthLabel: new Intl.DateTimeFormat("es-AR", {
       month: "long",
       year: "numeric",
