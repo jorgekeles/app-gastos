@@ -2528,7 +2528,8 @@ export async function getExpensesPageData(authUser: AuthUser) {
 export async function getSavingsPageData(authUser: AuthUser) {
   const context = await ensureUserAndFamily(authUser);
 
-  const [goals, transactions, reserved] = await Promise.all([
+  const [goals, transactions, reserved, totalIncome, actualExpense, pendingExpenses] =
+    await Promise.all([
     sql<
       {
         id: string;
@@ -2586,6 +2587,26 @@ export async function getSavingsPageData(authUser: AuthUser) {
       where st.family_id = ${context.family.id}::uuid
         and g.active = true
     `,
+    sql<NumericSummaryRow[]>`
+      select coalesce(sum(amount_base_snapshot), 0)::float8 as total
+      from public.incomes
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+    `,
+    sql<NumericSummaryRow[]>`
+      select coalesce(sum(amount_base_snapshot), 0)::float8 as total
+      from public.expenses
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and payment_status = 'PAID'
+    `,
+    sql<NumericSummaryRow[]>`
+      select coalesce(sum(amount_base_snapshot), 0)::float8 as total
+      from public.expenses
+      where family_id = ${context.family.id}::uuid
+        and deleted_at is null
+        and payment_status in ('PENDING', 'OVERDUE')
+    `,
   ]);
 
   const normalizedGoals: SavingsGoalRow[] = goals.map((goal) => {
@@ -2605,12 +2626,23 @@ export async function getSavingsPageData(authUser: AuthUser) {
     };
   });
 
+  const savingsReservedTotal = reserved[0]?.total ?? 0;
+  const availableReal =
+    (totalIncome[0]?.total ?? 0) -
+    (actualExpense[0]?.total ?? 0) -
+    savingsReservedTotal;
+  const cashAfterPaidExpenses =
+    (totalIncome[0]?.total ?? 0) - (actualExpense[0]?.total ?? 0);
+
   return {
     family: context.family,
     fullName: context.fullName,
     goals: normalizedGoals,
     transactions,
-    savingsReservedTotal: reserved[0]?.total ?? 0,
+    savingsReservedTotal,
+    availableReal,
+    cashAfterPaidExpenses,
+    pendingExpensesTotal: pendingExpenses[0]?.total ?? 0,
   };
 }
 

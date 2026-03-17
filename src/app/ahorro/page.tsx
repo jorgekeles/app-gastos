@@ -14,6 +14,17 @@ type SavingsPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
+type SavingsProtectionInfo = {
+  cardTone: "primary" | "good" | "warning" | "danger";
+  feedbackTone: "success" | "warning" | "error" | null;
+  statusLabel: string;
+  title: string;
+  description: string;
+  detail: string;
+  projectionNote: string | null;
+  atRiskAmount: number;
+};
+
 function parsePositiveNumber(value: string | string[] | undefined) {
   if (typeof value !== "string" || !value.trim()) {
     return null;
@@ -21,6 +32,128 @@ function parsePositiveNumber(value: string | string[] | undefined) {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function buildSavingsProtectionInfo(
+  savingsReservedTotal: number,
+  availableReal: number,
+  pendingExpensesTotal: number,
+  currency: "ARS" | "USD",
+): SavingsProtectionInfo {
+  const currentAtRisk =
+    savingsReservedTotal > 0
+      ? Math.min(
+          savingsReservedTotal,
+          Math.max(savingsReservedTotal - Math.max(availableReal, 0), 0),
+        )
+      : 0;
+  const projectedAvailable = availableReal - pendingExpensesTotal;
+  const projectedAtRisk =
+    savingsReservedTotal > 0
+      ? Math.min(
+          savingsReservedTotal,
+          Math.max(savingsReservedTotal - Math.max(projectedAvailable, 0), 0),
+        )
+      : 0;
+
+  if (savingsReservedTotal <= 0) {
+    return {
+      cardTone: "primary",
+      feedbackTone: null,
+      statusLabel: "Sin reserva activa",
+      title: "Todavia no hay ahorro protegido",
+      description:
+        "Crea un objetivo y registra un deposito para que AppGastos pueda vigilar si ese monto empieza a quedar expuesto por los egresos.",
+      detail: "Todavia no hay dinero reservado para monitorear.",
+      projectionNote: null,
+      atRiskAmount: 0,
+    };
+  }
+
+  if (availableReal < 0) {
+    return {
+      cardTone: "danger",
+      feedbackTone: "error",
+      statusLabel: "Ahorro comprometido",
+      title: "Tu ahorro reservado ya quedo comprometido",
+      description: `El disponible real ya es ${formatMoney(
+        availableReal,
+        currency,
+      )}. Eso significa que los gastos ya absorbieron ${formatMoney(
+        Math.abs(availableReal),
+        currency,
+      )} del margen libre y el ahorro quedo sin cobertura.`,
+      detail: `${formatMoney(
+        savingsReservedTotal,
+        currency,
+      )} reservados · ${formatMoney(Math.abs(availableReal), currency)} ya invadidos`,
+      projectionNote:
+        pendingExpensesTotal > 0
+          ? `Si mantenes los pendientes cargados actuales, la presion proyectada sube a ${formatMoney(
+              Math.max(Math.abs(projectedAvailable), Math.abs(availableReal)),
+              currency,
+            )}.`
+          : null,
+      atRiskAmount: savingsReservedTotal,
+    };
+  }
+
+  if (availableReal < savingsReservedTotal) {
+    return {
+      cardTone: "warning",
+      feedbackTone: "warning",
+      statusLabel: "Ahorro en observacion",
+      title: "Tu ahorro reservado esta cerca de quedar expuesto",
+      description: `Te quedan ${formatMoney(
+        availableReal,
+        currency,
+      )} libres frente a ${formatMoney(
+        savingsReservedTotal,
+        currency,
+      )} reservados. Si seguis cargando egresos, ${formatMoney(
+        currentAtRisk,
+        currency,
+      )} del ahorro puede quedar en zona de riesgo.`,
+      detail: `${formatMoney(
+        currentAtRisk,
+        currency,
+      )} del ahorro ya no tiene un colchon libre equivalente.`,
+      projectionNote:
+        pendingExpensesTotal > 0 && projectedAtRisk > currentAtRisk
+          ? `Con los pendientes ya cargados, el monto en riesgo subiria a ${formatMoney(
+              projectedAtRisk,
+              currency,
+            )}.`
+          : null,
+      atRiskAmount: currentAtRisk,
+    };
+  }
+
+  return {
+    cardTone: "good",
+    feedbackTone: "success",
+    statusLabel: "Ahorro resguardado",
+    title: "Tu ahorro reservado esta cubierto",
+    description: `Hoy tenes ${formatMoney(
+      availableReal,
+      currency,
+    )} libres despues de respetar ${formatMoney(
+      savingsReservedTotal,
+      currency,
+    )} reservados. Todavia hay margen para absorber egresos sin tocar el ahorro.`,
+    detail: `${formatMoney(
+      availableReal - savingsReservedTotal,
+      currency,
+    )} de colchon adicional por encima de lo reservado.`,
+    projectionNote:
+      pendingExpensesTotal > 0 && projectedAtRisk > 0
+        ? `Ojo: con los pendientes ya cargados podrian quedar ${formatMoney(
+            projectedAtRisk,
+            currency,
+          )} en observacion.`
+        : null,
+    atRiskAmount: 0,
+  };
 }
 
 export default async function SavingsPage({ searchParams }: SavingsPageProps) {
@@ -40,6 +173,12 @@ export default async function SavingsPage({ searchParams }: SavingsPageProps) {
   const simMonths =
     simAmount && simPeriod ? (simUnit === "years" ? simPeriod * 12 : simPeriod) : 0;
   const simResult = simAmount && simMonths ? simAmount * simMonths : 0;
+  const savingsProtection = buildSavingsProtectionInfo(
+    data.savingsReservedTotal,
+    data.availableReal,
+    data.pendingExpensesTotal,
+    data.family.baseCurrency,
+  );
 
   return (
     <ProtectedShell
@@ -57,16 +196,46 @@ export default async function SavingsPage({ searchParams }: SavingsPageProps) {
             value={formatMoney(data.savingsReservedTotal, data.family.baseCurrency)}
           />
           <SummaryCard
+            description="Lo que queda libre despues de respetar el ahorro reservado."
+            label="Colchon libre"
+            tone={
+              data.availableReal < 0
+                ? "danger"
+                : data.availableReal < data.savingsReservedTotal
+                  ? "warning"
+                  : "primary"
+            }
+            value={formatMoney(data.availableReal, data.family.baseCurrency)}
+          />
+          <SummaryCard
+            description={savingsProtection.detail}
+            label="Estado del resguardo"
+            tone={savingsProtection.cardTone}
+            value={
+              <span className="summary-split-value">
+                <span>{savingsProtection.statusLabel}</span>
+                <small>
+                  {savingsProtection.atRiskAmount > 0
+                    ? `${formatMoney(
+                        savingsProtection.atRiskAmount,
+                        data.family.baseCurrency,
+                      )} en riesgo`
+                    : "0 en riesgo"}
+                </small>
+              </span>
+            }
+          />
+          <SummaryCard
             description="Objetivos activos de ahorro disponibles."
             label="Objetivos"
             tone="primary"
             value={String(data.goals.length)}
           />
           <SummaryCard
-            description="Movimientos de ahorro registrados hasta hoy."
-            label="Movimientos"
+            description="Egresos pendientes u vencidos que ya pueden presionar el ahorro."
+            label="Pendientes cargados"
             tone="warning"
-            value={String(data.transactions.length)}
+            value={formatMoney(data.pendingExpensesTotal, data.family.baseCurrency)}
           />
         </section>
       }
@@ -86,6 +255,14 @@ export default async function SavingsPage({ searchParams }: SavingsPageProps) {
         </div>
       ) : null}
       {error ? <div className="feedback error">{error}</div> : null}
+      {savingsProtection.feedbackTone ? (
+        <div className={`feedback ${savingsProtection.feedbackTone}`}>
+          <strong>{savingsProtection.title}.</strong> {savingsProtection.description}
+          {savingsProtection.projectionNote ? (
+            <div className="feedback-subcopy">{savingsProtection.projectionNote}</div>
+          ) : null}
+        </div>
+      ) : null}
 
       <section className="dashboard-columns">
         <div className="module-stack">
