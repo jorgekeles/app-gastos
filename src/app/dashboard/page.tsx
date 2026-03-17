@@ -16,6 +16,28 @@ type DashboardPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
+function deriveStatus(paymentStatus: "PENDING" | "PAID" | "OVERDUE" | "CANCELED", dueDate: string) {
+  if (paymentStatus === "PENDING" && dueDate < new Date().toISOString().slice(0, 10)) {
+    return "OVERDUE";
+  }
+
+  return paymentStatus;
+}
+
+function statusLabel(status: "PENDING" | "PAID" | "OVERDUE" | "CANCELED") {
+  switch (status) {
+    case "PAID":
+      return "Pagado";
+    case "OVERDUE":
+      return "Vencido";
+    case "CANCELED":
+      return "Cancelado";
+    case "PENDING":
+    default:
+      return "Pendiente";
+  }
+}
+
 function buildDonutBackground(expenses: number, savings: number, available: number) {
   const total = expenses + savings + available;
 
@@ -56,6 +78,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const joined = params["joined"] === "1";
   const joinedFamily =
     typeof params["joinedFamily"] === "string" ? params["joinedFamily"] : null;
+  const updated = params["updated"] === "1";
+  const error = typeof params["error"] === "string" ? params["error"] : null;
   const blueRate = await getCurrentBlueRate().catch(() => null);
   const monthSavingsSlice = Math.max(dashboardData.monthSavingsNet, 0);
   const monthAvailableSlice = Math.max(
@@ -142,6 +166,12 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           Ya quedaste dentro de la familia <strong>{joinedFamily}</strong>.
         </div>
       ) : null}
+      {updated ? (
+        <div className="feedback success">
+          El vencimiento se marco como pagado correctamente.
+        </div>
+      ) : null}
+      {error ? <div className="feedback error">{error}</div> : null}
 
       <section className="dashboard-columns">
         <div className="module-stack">
@@ -280,28 +310,43 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             </div>
 
             {dashboardData.upcomingExpenses.length > 0 ? (
-              dashboardData.upcomingExpenses.map((expense) => (
-                <div className="timeline-row" key={expense.id}>
-                  <div>
-                    <strong>{expense.title}</strong>
-                    <span>
-                      {expense.category ?? expense.expenseKind} ·{" "}
-                      {formatShortDate(expense.dueDate)}
-                    </span>
+              dashboardData.upcomingExpenses.map((expense) => {
+                const derivedStatus = deriveStatus(expense.paymentStatus, expense.dueDate);
+
+                return (
+                  <div className="timeline-row" key={expense.id}>
+                    <div>
+                      <strong>{expense.title}</strong>
+                      <span>
+                        {expense.category ?? expense.expenseKind} ·{" "}
+                        {formatShortDate(expense.dueDate)}
+                      </span>
+                    </div>
+                    <div className="timeline-amount">
+                      <strong>
+                        {formatMoney(expense.amountOriginal, expense.currency)}
+                      </strong>
+                      <span
+                        className={`status-chip status-${derivedStatus.toLowerCase()}`}
+                      >
+                        {statusLabel(derivedStatus)}
+                      </span>
+                      {expense.paymentStatus !== "PAID" ? (
+                        <div className="inline-actions">
+                          <form action="/egresos/status" method="post">
+                            <input name="expenseId" type="hidden" value={expense.id} />
+                            <input name="returnTo" type="hidden" value="/dashboard" />
+                            <input name="status" type="hidden" value="PAID" />
+                            <button className="inline-good-button" type="submit">
+                              Marcar pagado
+                            </button>
+                          </form>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                  <div className="timeline-amount">
-                    <strong>
-                      {formatMoney(
-                        expense.amountOriginal,
-                        expense.currency,
-                      )}
-                    </strong>
-                    <span className="timeline-tag">
-                      {expense.paymentStatus}
-                    </span>
-                  </div>
-                </div>
-              ))
+                );
+              })
             ) : (
               <div className="empty-state">
                 Todavia no hay vencimientos pendientes cargados para la
