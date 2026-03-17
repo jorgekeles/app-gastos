@@ -176,9 +176,31 @@ export default async function CalendarPage({
               ) : null}
 
               {day.expenseTotal > 0 ? (
-                <div className="calendar-totals expense">
-                  Egresos {formatMoney(day.expenseTotal, data.family.baseCurrency)}
-                </div>
+                <button
+                  aria-label={`Ver composicion de egresos del ${day.date}`}
+                  className="calendar-totals expense calendar-total-popover"
+                  type="button"
+                >
+                  <span>
+                    Egresos {formatMoney(day.expenseTotal, data.family.baseCurrency)}
+                  </span>
+                  <div className="calendar-popover" role="tooltip">
+                    <strong>Gastos que componen el total</strong>
+                    <div className="calendar-popover-list">
+                      {day.expenses.map((expense) => (
+                        <div className="calendar-popover-item" key={expense.id}>
+                          <span>{expense.title}</span>
+                          <small>
+                            {formatMoney(expense.amountOriginal, expense.currency)} ·{" "}
+                            {statusLabel(
+                              deriveStatus(expense.paymentStatus, expense.dueDate),
+                            )}
+                          </small>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </button>
               ) : null}
 
               <div className="calendar-items">

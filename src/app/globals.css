@@ -1449,6 +1449,18 @@ button:disabled {
   font-size: 0.8rem;
 }
 
+.calendar-total-popover {
+  position: relative;
+  width: 100%;
+  border: 0;
+  text-align: left;
+  cursor: help;
+}
+
+.calendar-total-popover > span {
+  display: block;
+}
+
 .calendar-totals.income,
 .calendar-item.income {
   background: rgba(var(--accent-rgb), 0.12);
@@ -1459,6 +1471,64 @@ button:disabled {
 .calendar-item.expense {
   background: rgba(var(--warning-rgb), 0.12);
   color: #b45309;
+}
+
+.calendar-total-popover:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(var(--warning-rgb), 0.22);
+}
+
+.calendar-popover {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  z-index: 12;
+  width: min(280px, calc(100vw - 48px));
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.calendar-popover strong {
+  font-size: 0.86rem;
+}
+
+.calendar-popover-list {
+  display: grid;
+  gap: 10px;
+}
+
+.calendar-popover-item {
+  display: grid;
+  gap: 4px;
+}
+
+.calendar-popover-item span,
+.calendar-popover-item small {
+  overflow-wrap: anywhere;
+}
+
+.calendar-popover-item small {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.calendar-total-popover:hover .calendar-popover,
+.calendar-total-popover:focus-visible .calendar-popover {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
 }
 
 .calendar-items {
